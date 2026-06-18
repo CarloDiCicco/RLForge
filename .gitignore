@@ -216,3 +216,28 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Internal docs — NEVER commit (kept private; synced between machines via rsync,
+# DGX is source of truth). Only README.md + code are public-bound.
+PLAN.md
+RESEARCH_LOG.md
+AGENTS.md
+.claude/
+
+# ML artifacts (never commit — live under ~/data on the DGX, same big disk)
+/data/
+runs/
+outputs/
+checkpoints/
+artifacts/
+wandb/
+mlruns/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.onnx
+*.arrow
+*.parquet
+*.tar.zst
