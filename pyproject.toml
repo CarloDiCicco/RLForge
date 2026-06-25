@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rlforge"
+version = "0.1.0"
+description = "Verifier-guided post-training for code models: generate → execute → classify → store → filter → train → evaluate."
+requires-python = ">=3.11"
+
+# Core runtime dependencies — always required for the Milestone 1 infrastructure.
+dependencies = [
+    "pydantic>=2.0",   # canonical-schema validation + JSON (de)serialization at adapter boundaries
+    "pyyaml>=6.0",     # YAML config files (sandbox config, future run configs)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
