@@ -50,8 +50,10 @@ class ExecutionRecord(BaseModel):
 
     format_version: str = Field(default=FORMAT_VERSION)
 
-    # Identity + linkage. execution_result_id is this record's own id;
-    # sample_id ties it to the GenerationRecord that produced the code.
+    # Identity + linkage. execution_result_id is this record's own unique id;
+    # sample_id is the FOREIGN KEY to the GenerationRecord whose code was run
+    # (one generation → many executions, one per test suite, all sharing this
+    # sample_id). task_id is denormalized in for convenient task-level joins.
     execution_result_id: str
     sample_id: str
     task_id: str

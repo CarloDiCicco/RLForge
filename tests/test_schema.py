@@ -124,10 +124,39 @@ def test_generation_record_roundtrips():
         split="test", model_name="qwen", prompt_template_id="v1",
         decoding_temperature=0.7, top_p=0.95, max_new_tokens=512, seed=0,
         input_tokens=10, output_tokens=20, raw_output="...", extracted_code="...",
-        extraction_status="ok", execution_result_id="e1",
+        extraction_status="ok",
         timestamp="2026-06-25T00:00:00Z", git_commit="abc123",
     )
     assert GenerationRecord.model_validate_json(rec.model_dump_json()) == rec
+
+
+def test_executions_link_to_generation_by_sample_id():
+    """One generation fans out to many executions, joined by sample_id."""
+    gen = GenerationRecord(
+        run_id="r1", sample_id="s1", task_id="t1", dataset_source="humaneval",
+        split="test", model_name="qwen", prompt_template_id="v1",
+        decoding_temperature=0.7, top_p=0.95, max_new_tokens=512, seed=0,
+        input_tokens=10, output_tokens=20, raw_output="...", extracted_code="...",
+        extraction_status="ok", timestamp="2026-06-25T00:00:00Z", git_commit="abc",
+    )
+    # Same generated code (s1) run against two suites → two ExecutionRecords,
+    # distinct execution_result_id, shared sample_id.
+    execs = [
+        ExecutionRecord(
+            execution_result_id=eid, sample_id=gen.sample_id, task_id=gen.task_id,
+            sandbox_config_id="cfg", result=ExecutionResult(
+                passed=passed, failure_type=ft, execution_time_s=0.1),
+            timeout_s=8.0, test_suite_id=suite, visible_or_hidden_tests=suite,
+            timestamp="2026-06-25T00:00:00Z",
+        )
+        for eid, suite, passed, ft in [
+            ("e1", "visible", True, FailureType.PASS),
+            ("e2", "hidden", False, FailureType.ASSERTION),
+        ]
+    ]
+    # The join: filter executions by the generation's sample_id.
+    linked = [e for e in execs if e.sample_id == gen.sample_id]
+    assert {e.execution_result_id for e in linked} == {"e1", "e2"}
 
 
 def test_training_run_stamps_format_version():

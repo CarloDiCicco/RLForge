@@ -56,8 +56,12 @@ class GenerationRecord(BaseModel):
     raw_output: str
     extracted_code: str
     extraction_status: str
-    # Links to the ExecutionRecord produced from extracted_code.
-    execution_result_id: str
+    # NOTE: there is intentionally no execution_result_id here. One generated
+    # solution is executed against several test suites (visible / hidden /
+    # evalplus_extended), so it fans out to MANY ExecutionRecords. The link is
+    # stored child-side only: each ExecutionRecord carries this record's
+    # sample_id as its foreign key. To find a generation's executions, filter
+    # execution records by sample_id. (See ExecutionRecord.sample_id.)
 
     # Environment provenance.
     timestamp: str
