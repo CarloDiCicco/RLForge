@@ -10,6 +10,11 @@ from rlforge.classify.taxonomy import FailureType
 from rlforge.schema.execution import ExecutionRecord, ExecutionResult
 from rlforge.schema.records import GenerationRecord, TrainingRun
 from rlforge.schema.task import PROMPTABLE_SUITE, CodeTask
+from rlforge.schema.testsuite import TestSuite
+
+
+def _suite(*asserts: str) -> TestSuite:
+    return TestSuite(kind="assert", asserts=list(asserts))
 
 
 def _minimal_task(**overrides) -> CodeTask:
@@ -18,8 +23,8 @@ def _minimal_task(**overrides) -> CodeTask:
         source="humaneval",
         prompt="Write add(a, b).",
         test_suites={
-            "visible": ["assert add(2, 3) == 5"],
-            "hidden": ["assert add(-1, 1) == 0", "assert add(0, 0) == 0"],
+            "visible": _suite("assert add(2, 3) == 5"),
+            "hidden": _suite("assert add(-1, 1) == 0", "assert add(0, 0) == 0"),
         },
         reference_solution="def add(a, b):\n    return a + b",
     )
@@ -60,31 +65,31 @@ def test_prompt_tests_returns_only_visible_suite():
     task = _minimal_task()
     # The promptable accessor exposes the visible spec-examples only — never
     # the hidden grading suite (the reward-hacking guard).
-    assert task.prompt_tests() == ["assert add(2, 3) == 5"]
+    assert task.prompt_tests().asserts == ["assert add(2, 3) == 5"]
     assert PROMPTABLE_SUITE == "visible"
 
 
 def test_grading_suite_defaults_to_hidden_and_is_disjoint_from_prompt():
     task = _minimal_task()
     grading = task.grading_suite()
-    assert grading == ["assert add(-1, 1) == 0", "assert add(0, 0) == 0"]
+    assert grading.asserts == ["assert add(-1, 1) == 0", "assert add(0, 0) == 0"]
     # The whole point: nothing in the prompt overlaps the grading authority.
-    assert set(task.prompt_tests()).isdisjoint(grading)
+    assert set(task.prompt_tests().asserts).isdisjoint(grading.asserts)
 
 
-def test_missing_suite_returns_empty_not_error():
-    task = _minimal_task(test_suites={"visible": ["assert add(1, 1) == 2"]})
-    assert task.grading_suite("hidden") == []
+def test_missing_suite_returns_none_not_error():
+    task = _minimal_task(test_suites={"visible": _suite("assert add(1, 1) == 2")})
+    assert task.grading_suite("hidden") is None
 
 
 def test_empty_snippets_dropped_but_key_kept():
-    task = _minimal_task(test_suites={"hidden": ["", "  ", "assert add(1,1)==2"]})
-    assert task.test_suites["hidden"] == ["assert add(1,1)==2"]
+    task = _minimal_task(test_suites={"hidden": _suite("", "  ", "assert add(1,1)==2")})
+    assert task.test_suites["hidden"].asserts == ["assert add(1,1)==2"]
 
 
 def test_blank_suite_name_rejected():
     with pytest.raises(ValidationError):
-        _minimal_task(test_suites={"  ": ["assert True"]})
+        _minimal_task(test_suites={"  ": _suite("assert True")})
 
 
 # ── ExecutionResult / ExecutionRecord ──────────────────────────────────────────

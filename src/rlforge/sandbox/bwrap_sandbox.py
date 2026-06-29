@@ -139,6 +139,17 @@ class BwrapSandbox(SubprocessSandbox):
                 "bubblewrap (bwrap) not found on PATH; cannot build the bwrap "
                 "sandbox. Install it or use backend='subprocess'."
             )
+        if not bwrap_usable():
+            # The binary exists but cannot actually create a namespace (e.g. an
+            # AppArmor unprivileged-userns restriction, see RESEARCH_LOG.md).
+            # Checked here too, not just bwrap_available(): without this, a
+            # blocked host would construct successfully and only fail later
+            # inside run() with an opaque low-level bwrap error.
+            raise RuntimeError(
+                "bwrap is installed but cannot create a sandbox namespace on "
+                "this host (e.g. AppArmor blocks unprivileged user namespaces). "
+                "See RESEARCH_LOG.md for the fix, or use backend='subprocess'."
+            )
 
     def _preexec(self):
         """Apply resource limits but NOT the NPROC cap: the launched process is

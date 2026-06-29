@@ -9,9 +9,9 @@ generators all convert their raw rows into this one shape at the ingestion
 boundary. Nothing downstream of an adapter is allowed to see a source-specific
 shape — origin survives only as the `source` field, for analysis.
 
-Design choice: **named test suites** (PLAN §4.3 reward-hacking analysis).
+Design choice: **named, typed test suites** (PLAN §4.3 reward-hacking analysis).
 Instead of two fixed `visible_tests` / `hidden_tests` lists, tests live in a
-`test_suites: dict[str, list[str]]` keyed by role. Why:
+`test_suites: dict[str, TestSuite]` keyed by role. Why:
 
   - The *grading / reward* suite must never be placed in the prompt. During RL
     training that would apply optimization pressure toward hard-coding test
@@ -22,6 +22,16 @@ Instead of two fixed `visible_tests` / `hidden_tests` lists, tests live in a
     visible spec-examples, the hidden grading set, and the EvalPlus-extended
     set. A dict keeps these distinct and lets new suites be added without a
     schema migration (migrations are the expensive thing per PLAN).
+  - Each value is a `TestSuite` (see schema/testsuite.py), not a `list[str]`, so
+    a suite carries its own verification mechanism (assert / stdin-stdout /
+    checker). This stores each dataset's **canonical grading semantics**, which
+    is what keeps our benchmark numbers comparable to the literature.
+
+These suites hold the *grading* semantics only. How a prompt is phrased — and how
+spec-examples are rendered into it — is the **adapter's** responsibility, recorded
+via `GenerationRecord.prompt_template_id` (see the Data & Evaluation Methodology
+note in PLAN.md). The schema deliberately does not couple prompt format to test
+mechanism.
 
 Conventional suite keys (not enforced, but used across the codebase):
     "visible"            — small spec-examples; the only suite allowed in prompts
@@ -36,6 +46,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from rlforge import FORMAT_VERSION
+from rlforge.schema.testsuite import TestSuite
 
 # Suite key whose tests are the only ones permitted in a model prompt.
 # Centralized here so prompt-building code references the constant, not a
@@ -64,9 +75,9 @@ class CodeTask(BaseModel):
     function_signature: str | None = None
     entry_point: str | None = None
 
-    # Named test suites, keyed by role (see module docstring). Values are
-    # Python test snippets the executor runs against a candidate solution.
-    test_suites: dict[str, list[str]] = Field(default_factory=dict)
+    # Named test suites, keyed by role (see module docstring). Each value is a
+    # typed TestSuite carrying its verification mechanism + payload.
+    test_suites: dict[str, TestSuite] = Field(default_factory=dict)
 
     # A known-correct solution, when the source provides one. Used in M1 as the
     # generation stub (echoed back to prove the pipeline wiring) and later for
@@ -99,37 +110,39 @@ class CodeTask(BaseModel):
 
     @field_validator("test_suites")
     @classmethod
-    def _normalize_test_suites(
-        cls, value: dict[str, list[str]]
-    ) -> dict[str, list[str]]:
-        """Trim suite names and drop empty snippets, preserving order.
+    def _normalize_suite_names(
+        cls, value: dict[str, TestSuite]
+    ) -> dict[str, TestSuite]:
+        """Trim suite names and reject blank ones (payload is normalized by
+        TestSuite's own validator).
 
-        We keep a suite key even if its list ends up empty: an explicitly empty
+        We keep a suite key even if its suite ends up empty: an explicitly empty
         "hidden" suite (a task with no held-out grading tests) is a meaningful,
         analysable state — distinct from the key being absent — and PLAN §4.4
         wants weak/missing test suites surfaced, not silently dropped.
         """
-        normalized: dict[str, list[str]] = {}
-        for raw_name, snippets in value.items():
+        normalized: dict[str, TestSuite] = {}
+        for raw_name, suite in value.items():
             name = raw_name.strip()
             if not name:
                 raise ValueError("test-suite name must be non-empty")
-            normalized[name] = [s for s in snippets if s and s.strip()]
+            normalized[name] = suite
         return normalized
 
-    def prompt_tests(self) -> list[str]:
-        """The only tests allowed into a model prompt — the spec-examples.
+    def prompt_tests(self) -> TestSuite | None:
+        """The only suite allowed into a model prompt — the spec-examples.
 
-        Returns the PROMPTABLE_SUITE tests (empty list if absent). Prompt
-        builders must go through this, never read test_suites directly, so the
-        grading suites cannot leak into a prompt by accident.
+        Returns the PROMPTABLE_SUITE suite (None if absent). Prompt builders must
+        go through this, never read test_suites directly, so the grading suites
+        cannot leak into a prompt by accident. Render with
+        `suite.as_prompt_examples()`.
         """
-        return self.test_suites.get(PROMPTABLE_SUITE, [])
+        return self.test_suites.get(PROMPTABLE_SUITE)
 
-    def grading_suite(self, suite: str = "hidden") -> list[str]:
-        """The tests used as the pass/fail authority for the given role.
+    def grading_suite(self, role: str = "hidden") -> TestSuite | None:
+        """The suite used as the pass/fail authority for the given role.
 
-        Defaults to the "hidden" held-out suite. Returns an empty list if the
-        task has no such suite (callers should treat that as 'cannot grade').
+        Defaults to the "hidden" held-out suite. Returns None if the task has no
+        such suite (callers should treat that as 'cannot grade').
         """
-        return self.test_suites.get(suite, [])
+        return self.test_suites.get(role)
