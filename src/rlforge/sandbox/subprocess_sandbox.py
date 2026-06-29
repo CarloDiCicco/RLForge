@@ -194,7 +194,7 @@ class SubprocessSandbox:
 
 
 def _child_peak_mem_mb() -> float | None:
-    """Peak RSS of terminated children since process start, in MB.
+    """Physical RAM peak used by a terminated children since process start, in MB.
 
     Uses getrusage(RUSAGE_CHILDREN). ru_maxrss is kilobytes on Linux. This is
     cumulative across all children of this process, so it is an upper bound when
