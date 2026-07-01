@@ -61,6 +61,7 @@ def _execution(sample_id: str, execution_id: str) -> ExecutionRecord:
         timeout_s=8.0,
         test_suite_id="hidden",
         visible_or_hidden_tests="hidden",
+        test_suite_size=2,
         timestamp=utc_now_iso(),
     )
 

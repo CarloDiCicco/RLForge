@@ -70,6 +70,13 @@ class ExecutionRecord(BaseModel):
     timeout_s: float = Field(gt=0.0)
     test_suite_id: str
     visible_or_hidden_tests: str
+    # Verifier strictness: number of asserts / IO pairs in the suite that was
+    # graded (1 for a checker — a single pass/fail predicate). Datasets differ
+    # widely in how thoroughly they test (EvalPlus exists because HumanEval's
+    # original tests are too weak); a bare pass-rate does not reveal this.
+    # Denormalized here (not re-derived from the task) so slicing pass-rate by
+    # verifier strictness never requires joining back to the task.
+    test_suite_size: int = Field(ge=0)
 
     # Wall-clock timestamp (ISO-8601, UTC) when the execution was recorded.
     timestamp: str

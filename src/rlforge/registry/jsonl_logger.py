@@ -29,6 +29,7 @@ from typing import Type, TypeVar
 
 from pydantic import BaseModel
 
+from rlforge.metrics.metrics import RunMetrics
 from rlforge.schema.execution import ExecutionRecord
 from rlforge.schema.records import GenerationRecord
 
@@ -56,6 +57,23 @@ def log_generation(path: Path, record: GenerationRecord) -> None:
 def log_execution(path: Path, record: ExecutionRecord) -> None:
     """Append one ExecutionRecord as a JSON line (nested ExecutionResult included)."""
     _append_line(path, record.model_dump(mode="json"))
+
+
+def log_summary(
+    path: Path, run_id: str, metrics: RunMetrics, *, extra: dict | None = None
+) -> None:
+    """Append one run's aggregate RunMetrics as a JSON line.
+
+    Called once per pipeline run, after compute_metrics(). `extra` carries
+    provenance that belongs with the summary but is not part of RunMetrics
+    itself (e.g. model_name, git_commit, hardware_info, sandbox_config_id,
+    n_samples) — merged in after the metrics fields, mirroring ReasoningLab's
+    log_summary(policy, metrics, extra).
+    """
+    obj: dict = {"run_id": run_id, **metrics.model_dump(mode="json")}
+    if extra:
+        obj.update(extra)
+    _append_line(path, obj)
 
 
 def read_records(path: Path, model_cls: Type[M]) -> list[M]:

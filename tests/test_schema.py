@@ -113,6 +113,7 @@ def test_execution_record_embeds_result_and_roundtrips():
         timeout_s=8.0,
         test_suite_id="hidden",
         visible_or_hidden_tests="hidden",
+        test_suite_size=2,
         timestamp="2026-06-25T00:00:00Z",
     )
     restored = ExecutionRecord.model_validate_json(rec.model_dump_json())
@@ -152,6 +153,7 @@ def test_executions_link_to_generation_by_sample_id():
             sandbox_config_id="cfg", result=ExecutionResult(
                 passed=passed, failure_type=ft, execution_time_s=0.1),
             timeout_s=8.0, test_suite_id=suite, visible_or_hidden_tests=suite,
+            test_suite_size=1,
             timestamp="2026-06-25T00:00:00Z",
         )
         for eid, suite, passed, ft in [

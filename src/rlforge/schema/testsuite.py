@@ -37,7 +37,10 @@ TestKind = Literal["assert", "stdin_stdout", "checker"]
 
 
 class IOPair(BaseModel):
-    """One stdin→expected-stdout example for a `stdin_stdout` suite."""
+    """
+    One stdin→expected-stdout example for a `stdin_stdout` suite, it's one
+    pair of the test suite list.
+    """
 
     stdin: str
     stdout: str
@@ -94,6 +97,20 @@ class TestSuite(BaseModel):
     def is_empty(self) -> bool:
         """True iff the suite has no runnable tests (cannot grade with it)."""
         return not (self.asserts or self.io_pairs or self.checker_code)
+
+    def size(self) -> int:
+        """Verifier strictness: how many individual tests this suite runs.
+
+        Asserts and IO pairs each count as one test each; a checker is a single
+        pass/fail predicate, so it counts as 1 (0 if absent — an empty suite).
+        Feeds ExecutionRecord.test_suite_size so pass-rate can be sliced by
+        verifier strictness without joining back to the task.
+        """
+        if self.asserts:
+            return len(self.asserts)
+        if self.io_pairs:
+            return len(self.io_pairs)
+        return 1 if self.checker_code else 0
 
     def as_prompt_examples(self) -> str:
         """Render the suite as human-style spec-examples for a prompt.
