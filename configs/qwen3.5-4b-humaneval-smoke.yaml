@@ -22,9 +22,10 @@ generation:
   presence_penalty: 1.3
 
 run:
-  # Matches pipeline.py's own CLI default and .gitignore's stated intent:
-  # run output lives on the big disk under ~/data, never inside the repo.
-  out_dir: /home/carlo/data/projects/RLForge/runs
+  # In-repo, matching ReasoningLab's convention: runs/ lives in the repo
+  # (gitignored contents, tracked folder) so `ls runs/` from the repo root
+  # just works.
+  out_dir: runs
   n_samples: 1
   ks: [1]
   grading_role: hidden

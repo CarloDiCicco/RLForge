@@ -281,7 +281,9 @@ if __name__ == "__main__":
     run_pipeline(
         loaded_tasks,
         config=RunConfig(
-            out_dir=str(Path.home() / "data" / "projects" / "RLForge" / "runs"),
+            # In-repo, matching ReasoningLab's convention: runs/ is a tracked
+            # (but gitignored-contents) folder in the repo, not on ~/data.
+            out_dir="runs",
             sandbox_config=_default_sandbox_config(),
         ),
     )

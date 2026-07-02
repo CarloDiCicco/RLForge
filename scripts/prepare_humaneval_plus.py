@@ -8,9 +8,9 @@ CodeTask/TestSuite schema (PLAN §2.2).
 adapters.humaneval.load_humaneval_plus() re-derives CodeTasks from evalplus's
 own cache on every call — there is no plain file anywhere in RLForge's own
 schema to `cat`/grep/open directly. This script runs that conversion once and
-writes the result to disk, mirroring ReasoningLab's scripts/prepare_*.py
-pattern (adapted to our schema, and to this project's "data lives under
-~/data, never in git" convention rather than ReasoningLab's committed data/).
+writes the result to disk, matching ReasoningLab's scripts/prepare_*.py ->
+data/*.jsonl pattern exactly (in-repo, committed — see .gitignore's
+data/* + !data/humaneval_plus.jsonl exception).
 
 The output is loadable by the EXISTING adapters.task_loader.load_tasks() —
 no new loader needed; a config can point tasks_file at this file instead of
@@ -28,7 +28,9 @@ from pathlib import Path
 
 from rlforge.adapters.humaneval import load_humaneval_plus
 
-DEFAULT_OUTPUT = Path.home() / "data" / "projects" / "RLForge" / "data" / "humaneval_plus.jsonl"
+# In-repo, matching ReasoningLab's convention (data/humaneval_plus.jsonl,
+# committed to git — see .gitignore's explicit exception for this file).
+DEFAULT_OUTPUT = Path("data") / "humaneval_plus.jsonl"
 
 
 def main() -> None:
