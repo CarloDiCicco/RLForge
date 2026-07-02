@@ -190,9 +190,17 @@ RESEARCH_LOG.md
 AGENTS.md
 .claude/
 
-# ML artifacts (never commit — live under ~/data on the DGX, same big disk)
-/data/
-runs/
+# ML artifacts. Both data/ and runs/ live in-repo but are ignored BY DEFAULT,
+# opt-in per file via an explicit "!" exception — mirrors ReasoningLab's
+# runs/*  + !runs/h2-trajectory-all/ pattern, applied consistently to both
+# dirs. data/ exceptions: small, stable, reviewable converted datasets (e.g.
+# data/humaneval_plus.jsonl). runs/ exceptions: a specific run promoted to a
+# permanent, citable result once it's actually paper-worthy.
+data/*
+!data/.gitkeep
+!data/humaneval_plus.jsonl
+runs/*
+!runs/.gitkeep
 outputs/
 checkpoints/
 artifacts/
