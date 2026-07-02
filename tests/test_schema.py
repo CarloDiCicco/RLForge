@@ -127,7 +127,7 @@ def test_execution_record_embeds_result_and_roundtrips():
 def test_generation_record_roundtrips():
     rec = GenerationRecord(
         run_id="r1", sample_id="s1", task_id="t1", dataset_source="humaneval",
-        split="test", model_name="qwen", prompt_template_id="v1",
+        split="test", model_name="qwen", final_prompt="...", prompt_template_id="v1",
         decoding_temperature=0.7, top_p=0.95, max_new_tokens=512, seed=0,
         input_tokens=10, output_tokens=20, raw_output="...", extracted_code="...",
         extraction_status="ok",
@@ -140,7 +140,7 @@ def test_executions_link_to_generation_by_sample_id():
     """One generation fans out to many executions, joined by sample_id."""
     gen = GenerationRecord(
         run_id="r1", sample_id="s1", task_id="t1", dataset_source="humaneval",
-        split="test", model_name="qwen", prompt_template_id="v1",
+        split="test", model_name="qwen", final_prompt="...", prompt_template_id="v1",
         decoding_temperature=0.7, top_p=0.95, max_new_tokens=512, seed=0,
         input_tokens=10, output_tokens=20, raw_output="...", extracted_code="...",
         extraction_status="ok", timestamp="2026-06-25T00:00:00Z", git_commit="abc",

@@ -69,6 +69,11 @@ class GenOutput(NamedTuple):
     seed: int
     input_tokens: int
     output_tokens: int
+    # The exact, post-template string sent to the model (or, for a stub that
+    # never calls a model, an honest note of what the stub actually used).
+    # Never reconstructed later from task_id + prompt_template_id — see
+    # GenerationRecord.final_prompt for why that would be unreliable.
+    final_prompt: str
     prompt_template_id: str = "bare"
 
 
@@ -100,6 +105,11 @@ def echo_reference_stub(task: CodeTask, sample_idx: int) -> GenOutput:
         seed=0,
         input_tokens=len(task.prompt.split()),
         output_tokens=token_proxy,
+        # The stub never calls a model, so it never builds a real prompt via
+        # prompt_template.build_prompt — recording that plainly (task.prompt,
+        # unwrapped) is more honest than fabricating a template call that
+        # didn't happen. A real generate_fn sets this to build_prompt(task).
+        final_prompt=task.prompt,
     )
 
 
@@ -189,6 +199,7 @@ def run_pipeline(
                 dataset_source=task.source,
                 split="smoke",
                 model_name=gen.model_name,
+                final_prompt=gen.final_prompt,
                 prompt_template_id=gen.prompt_template_id,
                 decoding_temperature=gen.decoding_temperature,
                 top_p=gen.top_p,

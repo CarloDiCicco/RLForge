@@ -31,6 +31,7 @@ def _generation(run_id: str, sample_id: str) -> GenerationRecord:
         dataset_source="fixture",
         split="test",
         model_name="stub-echo",
+        final_prompt="Write add(a, b).",
         prompt_template_id="bare",
         decoding_temperature=0.0,
         top_p=1.0,

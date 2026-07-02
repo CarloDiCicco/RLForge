@@ -41,6 +41,16 @@ class GenerationRecord(BaseModel):
     adapter_name: str | None = None
 
     # Prompt + decoding parameters (the knobs analysis attributes effects to).
+    # final_prompt is the exact, post-template string sent to the model — not
+    # task.prompt (already recoverable via task_id) and not just which template
+    # ran (prompt_template_id alone). Reconstructing it later by re-loading the
+    # task and re-running the template is NOT reliable: the task's raw data can
+    # change (a dataset update, an adapter bugfix — see adapters/humaneval.py's
+    # own history) and the template function can be edited, so "same
+    # prompt_template_id" stops guaranteeing "same rendered text". Storing the
+    # literal string keeps every generation exactly reproducible/debuggable,
+    # matching the same provenance discipline as git_commit/hardware_info.
+    final_prompt: str
     prompt_template_id: str
     decoding_temperature: float
     top_p: float
