@@ -21,6 +21,10 @@ dev = [
 data = [
     # Dataset preparation adapters (adapters/humaneval.py).
     "evalplus",   # HumanEval+ dataset access
+    # adapters/livecodebench.py — raw dataset download (caches to
+    # ~/.cache/huggingface/hub/, outside the repo, same convention as
+    # evalplus's own ~/.cache/evalplus/ cache).
+    "huggingface_hub>=0.20",
 ]
 model = [
     # Local model inference (models/qwen.py). torch left unpinned — install

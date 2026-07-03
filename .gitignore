@@ -199,6 +199,7 @@ AGENTS.md
 data/*
 !data/.gitkeep
 !data/humaneval_plus.jsonl
+!data/livecodebench_leetcode.jsonl
 runs/*
 !runs/.gitkeep
 outputs/
