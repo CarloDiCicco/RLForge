@@ -54,7 +54,8 @@ def test_generation_defaults_match_qwen35_card_recommendation():
     assert gen.top_k == 20
     assert gen.min_p == 0.0
     assert gen.repetition_penalty == 1.0
-    assert gen.presence_penalty == 1.3
+    assert gen.presence_penalty == 1.5
+    assert gen.enable_thinking is False
 
 
 def test_rejects_both_tasks_file_and_dataset_set(tmp_path):

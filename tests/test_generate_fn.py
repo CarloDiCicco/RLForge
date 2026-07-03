@@ -20,6 +20,7 @@ class _FakeGenOutput(NamedTuple):
     prompt_tokens: int
     completion_tokens: int
     elapsed_s: float = 0.01
+    hit_token_cap: bool = False
 
 
 class _FakeModel:
@@ -33,12 +34,13 @@ class _FakeModel:
 
     def generate(self, prompt, *, max_new_tokens, do_sample=True, temperature=0.7,
                  top_p=0.8, top_k=20, min_p=0.0, repetition_penalty=1.0,
-                 presence_penalty=1.3, seed=0):
+                 presence_penalty=1.5, seed=0, enable_thinking=False):
         self.calls.append(dict(
             prompt=prompt, max_new_tokens=max_new_tokens, do_sample=do_sample,
             temperature=temperature, top_p=top_p, top_k=top_k, min_p=min_p,
             repetition_penalty=repetition_penalty,
             presence_penalty=presence_penalty, seed=seed,
+            enable_thinking=enable_thinking,
         ))
         return _FakeGenOutput(text=self._text, prompt_tokens=42, completion_tokens=13)
 
@@ -134,3 +136,33 @@ def test_generate_fn_records_noop_values_when_greedy():
     # reflect that, not the (unused) argument values.
     assert out.decoding_temperature == 0.0
     assert out.top_p == 1.0
+
+
+def test_generate_fn_forwards_hit_token_cap_flag_from_model():
+    class _CappedFakeModel(_FakeModel):
+        def generate(self, *args, **kwargs):
+            return _FakeGenOutput(text=self._text, prompt_tokens=42, completion_tokens=13, hit_token_cap=True)
+
+    fn = make_qwen_generate_fn(_CappedFakeModel())
+    out = fn(_task(), 0)
+    assert out.hit_token_cap is True
+
+
+def test_generate_fn_defaults_hit_token_cap_false():
+    fn = make_qwen_generate_fn(_FakeModel())
+    out = fn(_task(), 0)
+    assert out.hit_token_cap is False
+
+
+def test_generate_fn_defaults_enable_thinking_false():
+    fn = make_qwen_generate_fn(_FakeModel())
+    out = fn(_task(), 0)
+    assert out.enable_thinking is False
+
+
+def test_generate_fn_forwards_enable_thinking_to_model_and_output():
+    model = _FakeModel()
+    fn = make_qwen_generate_fn(model, enable_thinking=True)
+    out = fn(_task(), 0)
+    assert model.calls[0]["enable_thinking"] is True
+    assert out.enable_thinking is True

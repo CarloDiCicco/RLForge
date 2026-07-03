@@ -45,8 +45,9 @@ class SupportsGenerate(Protocol):
         top_k: int = 20,
         min_p: float = 0.0,
         repetition_penalty: float = 1.0,
-        presence_penalty: float = 1.3,
+        presence_penalty: float = 1.5,
         seed: int = 0,
+        enable_thinking: bool = False,
     ):
         ...
 
@@ -61,8 +62,9 @@ def make_qwen_generate_fn(
     top_k: int = 20,
     min_p: float = 0.0,
     repetition_penalty: float = 1.0,
-    presence_penalty: float = 1.3,
+    presence_penalty: float = 1.5,
     seed: int = 0,
+    enable_thinking: bool = False,
 ) -> GenerateFn:
     """Build a GenerateFn that calls `model` for real generation.
 
@@ -96,6 +98,7 @@ def make_qwen_generate_fn(
             repetition_penalty=repetition_penalty,
             presence_penalty=presence_penalty,
             seed=sample_seed,
+            enable_thinking=enable_thinking,
         )
         return GenOutput(
             raw_output=out.text,
@@ -110,6 +113,10 @@ def make_qwen_generate_fn(
             seed=sample_seed,
             input_tokens=out.prompt_tokens,
             output_tokens=out.completion_tokens,
+            hit_token_cap=out.hit_token_cap,
+            generation_time_s=out.elapsed_s,
+            model_revision=getattr(model, "model_revision", None),
+            enable_thinking=enable_thinking,
             final_prompt=final_prompt,
             prompt_template_id=PROMPT_TEMPLATE_ID,
         )

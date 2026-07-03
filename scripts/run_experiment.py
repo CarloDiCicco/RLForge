@@ -53,6 +53,7 @@ def main(config_path: str) -> None:
         repetition_penalty=config.generation.repetition_penalty,
         presence_penalty=config.generation.presence_penalty,
         seed=config.seed,
+        enable_thinking=config.generation.enable_thinking,
     )
 
     run_pipeline(tasks, generate_fn=gen_fn, config=config.run)

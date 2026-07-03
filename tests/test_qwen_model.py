@@ -75,6 +75,12 @@ def test_presence_penalty_runs_against_real_model(model):
     # Confirms _PresencePenaltyLogitsProcessor actually executes without
     # erroring against the real model (not just unit-tested in isolation),
     # and that <think> is still suppressed under sampling + the penalty.
-    out = model.generate(_PROMPT, max_new_tokens=256, do_sample=True, presence_penalty=1.3)
+    out = model.generate(_PROMPT, max_new_tokens=256, do_sample=True, presence_penalty=1.5)
     assert out.text.strip()
     assert "<think>" not in out.text
+
+
+def test_hit_token_cap_flag_present_and_sane(model):
+    # A short cap on this simple prompt should finish before hitting the cap.
+    out = model.generate(_PROMPT, max_new_tokens=256)
+    assert out.hit_token_cap is False

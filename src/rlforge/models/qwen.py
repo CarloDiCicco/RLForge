@@ -45,7 +45,7 @@ class _PresencePenaltyLogitsProcessor(LogitsProcessor):
     """Flat additive penalty on tokens already seen in the generated portion.
 
     penalty=0.0 is a no-op (never constructed in that case — see generate()).
-    Qwen3.5's model card recommends 1.3-1.5 for non-thinking-mode generation.
+    Qwen3.5's model card recommends 1.5 for instruct-mode general tasks.
     """
 
     def __init__(self, penalty: float, prompt_length: int) -> None:
@@ -67,6 +67,10 @@ class QwenGenerationOutput(NamedTuple):
     prompt_tokens: int
     completion_tokens: int
     elapsed_s: float
+    # True iff generation stopped because max_new_tokens was hit rather than a
+    # natural EOS — the actual repetition-suspicion signal (presence_penalty
+    # only reduces the odds of this happening, it doesn't tell you if it did).
+    hit_token_cap: bool
 
 
 class QwenModel:
@@ -83,6 +87,9 @@ class QwenModel:
         )
         # eval() disables dropout — required for deterministic greedy decoding.
         self.model.eval()
+        # The actual resolved HF commit hash for this model repo — guards
+        # against the repo being silently re-uploaded upstream after this run.
+        self.model_revision: str | None = getattr(self.model.config, "_commit_hash", None)
 
     def generate(
         self,
@@ -95,27 +102,39 @@ class QwenModel:
         top_k: int = 20,
         min_p: float = 0.0,
         repetition_penalty: float = 1.0,
-        presence_penalty: float = 1.3,
+        presence_penalty: float = 1.5,
         seed: int = 0,
+        enable_thinking: bool = False,
     ) -> QwenGenerationOutput:
         """Generate a completion for one prompt.
 
         Defaults are Qwen3.5's own model-card-recommended settings for
-        non-thinking-mode generation (do_sample=True, temperature=0.7,
-        top_p=0.8, top_k=20, repetition_penalty=1.0, presence_penalty=1.3) —
+        instruct (non-thinking) mode, general tasks (do_sample=True,
+        temperature=0.7, top_p=0.8, top_k=20, repetition_penalty=1.0,
+        presence_penalty=1.5) — verified directly against the HF model card —
         not a generic/greedy default. Sampling params are only applied to
         gen_kwargs when do_sample=True; passing do_sample=False still works
         (e.g. tests wanting deterministic output) and ignores them.
+
+        enable_thinking selects between two genuinely different model
+        behaviors and their own separate model-card-recommended sampling
+        rows (thinking mode: temperature=0.6, top_p=0.95, presence_penalty=0.0
+        for precise coding) — this default (False) only covers the
+        non-thinking row above; the caller is responsible for also switching
+        the other sampling params if enable_thinking=True is used. Results
+        from the two modes are not comparable to each other and must be
+        recorded/tagged distinctly (see GenerationRecord.enable_thinking).
         """
-        # enable_thinking=False: the source-level fix for Qwen3.5's reasoning-
-        # mode default. Without it the model emits a <think>...</think> block
-        # first, which would eat most of max_new_tokens before any code appears.
+        # enable_thinking=False (the default): the source-level fix for
+        # Qwen3.5's reasoning-mode default. Without it the model emits a
+        # <think>...</think> block first, which would eat most of
+        # max_new_tokens before any code appears.
         messages = [{"role": "user", "content": prompt}]
         formatted = self.tokenizer.apply_chat_template(
             messages,
             tokenize=False, # the tokenizer will tokenize below
             add_generation_prompt=True, # adds the "Assistant:" prompt to the end of the message list
-            enable_thinking=False,
+            enable_thinking=enable_thinking,
         )
         inputs = self.tokenizer(formatted, return_tensors="pt").to(self.model.device)
         prompt_tokens = inputs["input_ids"].shape[1]
@@ -162,9 +181,14 @@ class QwenModel:
         new_ids = output_ids[0][prompt_tokens:]
         text = self.tokenizer.decode(new_ids, skip_special_tokens=True)
 
+        # No EOS token anywhere in the completion => generation ran until
+        # max_new_tokens cut it off, rather than stopping naturally.
+        hit_token_cap = self.tokenizer.eos_token_id not in new_ids.tolist()
+
         return QwenGenerationOutput(
             text=text,
             prompt_tokens=prompt_tokens,
             completion_tokens=new_ids.shape[0],
             elapsed_s=elapsed,
+            hit_token_cap=hit_token_cap,
         )

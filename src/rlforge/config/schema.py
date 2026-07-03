@@ -52,7 +52,13 @@ class GenerationConfig(BaseModel):
     top_k: int = Field(default=20, ge=0)
     min_p: float = Field(default=0.0, ge=0.0, le=1.0)
     repetition_penalty: float = Field(default=1.0, ge=1.0)
-    presence_penalty: float = Field(default=1.3, ge=0.0, le=2.0)
+    presence_penalty: float = Field(default=1.5, ge=0.0, le=2.0)
+    # Explicit, not inferred: thinking vs non-thinking are different model
+    # behaviors with their own model-card sampling rows (this config's other
+    # defaults are the non-thinking, general-tasks row). A config author must
+    # opt into thinking mode deliberately, not have it silently mismatch the
+    # rest of the sampling params above.
+    enable_thinking: bool = Field(default=False)
 
 
 class ExperimentConfig(BaseModel):

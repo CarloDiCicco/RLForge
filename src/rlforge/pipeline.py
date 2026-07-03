@@ -27,6 +27,7 @@ Consumed by:
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from typing import Callable, NamedTuple
 
@@ -75,6 +76,23 @@ class GenOutput(NamedTuple):
     # GenerationRecord.final_prompt for why that would be unreliable.
     final_prompt: str
     prompt_template_id: str = "bare"
+    # True iff generation was cut off by max_new_tokens rather than a natural
+    # stop — the actual repetition-suspicion signal. Stubs that never truly
+    # generate (echo_reference_stub) default to False: they can't hit a cap.
+    hit_token_cap: bool = False
+    # Wall-clock time the model spent generating this one completion. Stubs
+    # that never truly generate (echo_reference_stub) default to 0.0.
+    generation_time_s: float = 0.0
+    # HF revision/commit of the loaded model repo, when the generator can
+    # report one (e.g. QwenModel). None for stubs.
+    model_revision: str | None = None
+    # Whether Qwen3.5's thinking mode was enabled for this generation — two
+    # genuinely different model behaviors with separate model-card-recommended
+    # sampling params (see models/qwen.py). Numbers from thinking vs
+    # non-thinking runs are NOT comparable to each other; this field is what
+    # makes that distinction travel with the record instead of living only in
+    # a run's (possibly later-renamed/moved) config file.
+    enable_thinking: bool = False
 
 
 GenerateFn = Callable[[CodeTask, int], GenOutput]
@@ -174,6 +192,7 @@ def run_pipeline(
     sandbox = make_sandbox(config.sandbox_config)
     grading_execs: list[ExecutionRecord] = []
     last_model_name = "unknown"
+    run_start = time.perf_counter()
 
     for task in tasks:
         for sample_idx in range(config.n_samples):
@@ -199,6 +218,7 @@ def run_pipeline(
                 dataset_source=task.source,
                 split="smoke",
                 model_name=gen.model_name,
+                model_revision=gen.model_revision,
                 final_prompt=gen.final_prompt,
                 prompt_template_id=gen.prompt_template_id,
                 decoding_temperature=gen.decoding_temperature,
@@ -207,6 +227,9 @@ def run_pipeline(
                 seed=gen.seed,
                 input_tokens=gen.input_tokens,
                 output_tokens=gen.output_tokens,
+                hit_token_cap=gen.hit_token_cap,
+                generation_time_s=gen.generation_time_s,
+                enable_thinking=gen.enable_thinking,
                 raw_output=gen.raw_output,
                 extracted_code=res.code,
                 extraction_status=res.status,
@@ -249,7 +272,22 @@ def run_pipeline(
                 log_execution(executions_path, exec_record)
                 if suite_name == config.grading_role:
                     grading_execs.append(exec_record)
+                    # One line per (task, sample), printed the moment the
+                    # grading suite finishes — a long run (hundreds of tasks,
+                    # real generation latency) is otherwise silent from start
+                    # to the final summary line, with no way to tell progress
+                    # from a hang or a bad pattern (e.g. every sample hitting
+                    # the token cap) until it's over.
+                    verdict = "PASS" if result.passed else f"FAIL({result.failure_type.value})"
+                    print(
+                        f"[pipeline] {task.task_id} sample {sample_idx}: "
+                        f"{config.grading_role}={verdict} "
+                        f"gen={gen.generation_time_s:.1f}s "
+                        f"exec={result.execution_time_s:.1f}s "
+                        f"hit_cap={gen.hit_token_cap}"
+                    )
 
+    total_exp_duration_s = time.perf_counter() - run_start
     metrics = compute_metrics(grading_execs, config.ks)
     log_summary(
         summary_path,
@@ -261,11 +299,16 @@ def run_pipeline(
             "hardware_info": hardware_info(),
             "sandbox_config_id": config.sandbox_config.sandbox_config_id,
             "n_samples": config.n_samples,
+            # Total wall-clock time for the whole run (generation + sandbox
+            # execution across every task/sample) — the raw material for any
+            # later compute-normalized comparison (e.g. pass@1 per GPU-hour).
+            "total_exp_duration_s": total_exp_duration_s,
         },
     )
     print(
         f"[pipeline] run {run_id}: pass@1={metrics.pass_at_1:.3f} "
-        f"pass@k={metrics.pass_at_k} failures={metrics.failure_dist}"
+        f"pass@k={metrics.pass_at_k} failures={metrics.failure_dist} "
+        f"total_exp_duration_s={total_exp_duration_s:.1f}"
     )
     return metrics
 

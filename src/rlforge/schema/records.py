@@ -36,8 +36,12 @@ class GenerationRecord(BaseModel):
 
     # Model provenance — enough to reproduce which model produced the sample.
     model_name: str
-    model_size: str | None = None
+    # HF revision/commit of the loaded model repo — guards against a model
+    # repo being silently re-uploaded upstream after this run.
     model_revision: str | None = None
+    # Set once M3 starts running LoRA/adapter checkpoints on top of a shared
+    # base model — distinguishes runs that otherwise share the same
+    # model_name (e.g. "sft-rejection-sampled-v1" vs "dpo-v2").
     adapter_name: str | None = None
 
     # Prompt + decoding parameters (the knobs analysis attributes effects to).
@@ -61,6 +65,22 @@ class GenerationRecord(BaseModel):
     # Token accounting.
     input_tokens: int
     output_tokens: int
+    # True iff generation stopped because max_new_tokens was hit rather than a
+    # natural EOS — the repetition-suspicion signal (a run of completions that
+    # all hit the cap is a red flag distinct from any single failure type).
+    hit_token_cap: bool = False
+    # Wall-clock time the model spent generating this one completion — the
+    # generation-side counterpart to ExecutionRecord.execution_time_s, which
+    # only measures the sandbox run. Needed for any later compute-normalized
+    # comparison (e.g. pass@1 per GPU-hour).
+    generation_time_s: float = 0.0
+    # Whether Qwen3.5's thinking mode was enabled — thinking vs non-thinking
+    # are two genuinely different model behaviors with separate model-card-
+    # recommended sampling params (see models/qwen.py). Numbers from the two
+    # modes are NOT comparable; this field must travel with each record so
+    # that fact survives independent of any run's (possibly moved/renamed)
+    # config file.
+    enable_thinking: bool = False
 
     # The generation itself and what extraction made of it.
     raw_output: str
