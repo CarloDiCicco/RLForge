@@ -1,0 +1,37 @@
+# First real baseline: Qwen3.5-4B (instruct, non-thinking mode, zero-shot)
+# against the FULL HumanEval+ set (164 tasks). This is the citable baseline
+# number — the smoke config (qwen3.5-4b-humaneval-smoke.yaml) only verifies
+# wiring on a 10-task slice.
+#
+# Sampling settings (generation:) are Qwen3.5's official model-card-
+# recommended values for INSTRUCT (non-thinking) mode, general tasks —
+# verified directly against huggingface.co/Qwen/Qwen3.5-4B, no customization.
+# A thinking-mode run (enable_thinking: true, with its own separate sampling
+# row) is a deliberately separate future experiment — its numbers are not
+# comparable to this run's and must not be mixed with it.
+#
+# Usage:
+#   python scripts/run_experiment.py configs/qwen3.5-4b-humaneval-full.yaml
+
+experiment_id: qwen3.5-4b-humaneval-full
+seed: 0
+model_id: Qwen/Qwen3.5-4B
+dataset: humaneval_plus
+# max_tasks omitted: run all 164 tasks.
+
+generation:
+  max_new_tokens: 1024
+  do_sample: true
+  temperature: 0.7
+  top_p: 0.8
+  top_k: 20
+  min_p: 0.0
+  repetition_penalty: 1.0
+  presence_penalty: 1.5
+  enable_thinking: false
+
+run:
+  out_dir: runs
+  n_samples: 1
+  ks: [1]
+  grading_role: hidden

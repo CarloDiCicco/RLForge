@@ -1,6 +1,14 @@
-# First real baseline: Qwen3.5-4B against a small slice of HumanEval+.
-# Sampling settings (generation:) are Qwen3.5's own model-card-recommended
-# values for non-thinking-mode generation.
+# Smoke test: Qwen3.5-4B (instruct, non-thinking mode) against a small slice
+# of HumanEval+. Verifies the full pipeline wiring (load -> generate ->
+# extract -> sandbox -> classify -> record -> metrics) against real model
+# output before committing to the full 164-task run.
+#
+# Sampling settings (generation:) are Qwen3.5's official model-card-
+# recommended values for INSTRUCT (non-thinking) mode, general tasks —
+# verified directly against huggingface.co/Qwen/Qwen3.5-4B, no customization.
+# enable_thinking is explicit (not inferred) since thinking vs non-thinking
+# are different model behaviors with their own separate sampling-param rows;
+# numbers from the two modes are not comparable to each other.
 #
 # Usage:
 #   python scripts/run_experiment.py configs/qwen3.5-4b-humaneval-smoke.yaml
@@ -19,7 +27,8 @@ generation:
   top_k: 20
   min_p: 0.0
   repetition_penalty: 1.0
-  presence_penalty: 1.3
+  presence_penalty: 1.5
+  enable_thinking: false
 
 run:
   # In-repo, matching ReasoningLab's convention: runs/ lives in the repo
