@@ -117,5 +117,58 @@ _LINUX_ONLY_OS_ATTRS = [
 for _attr in _LINUX_ONLY_OS_ATTRS:
     if hasattr(_os, _attr):
         setattr(_os, _attr, None)
+
+# Close the wildcard-import hole: the stdlib import block prepended BEFORE this
+# preamble (LIVECODEBENCH_IMPORTS) runs `from sys import *` / `from builtins
+# import *`, binding bare globals `exit`/`quit` to the real functions. Nullifying
+# _sys.exit / _os._exit above does not touch those bare names, so re-nullify them
+# here, after the wildcard imports, or a candidate could fake an early clean exit.
+exit = None
+quit = None
 # ── End of safety preamble ──────────────────────────────────────────────────
+'''
+
+# LiveCodeBench's exact import preamble (lcb_runner/evaluation/testing_util.py,
+# variable `import_string`), prepended verbatim before SAFETY_PREAMBLE so
+# candidate code sees the same implicitly-available stdlib names the LiveCodeBench
+# judge provides (bare List, deque, math.*, ...) plus the same recursion limit.
+# Without this, otherwise-correct LeetCode-style solutions fail with NameError /
+# RecursionError on names the platform supplies for free. Kept character-for-
+# character faithful to upstream for benchmark comparability.
+LIVECODEBENCH_IMPORTS = '''\
+from string import *
+from re import *
+from datetime import *
+from collections import *
+from heapq import *
+from bisect import *
+from copy import *
+from math import *
+from random import *
+from statistics import *
+from itertools import *
+from functools import *
+from operator import *
+from io import *
+from sys import *
+from json import *
+from builtins import *
+from typing import *
+import string
+import re
+import datetime
+import collections
+import heapq
+import bisect
+import copy
+import math
+import random
+import statistics
+import itertools
+import functools
+import operator
+import io
+import sys
+import json
+sys.setrecursionlimit(50000)
 '''

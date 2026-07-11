@@ -59,9 +59,62 @@ import json
 import pickle
 import re
 import zlib
+from dataclasses import dataclass, field
 
 from rlforge.schema.task import CodeTask
 from rlforge.schema.testsuite import TestSuite
+
+
+@dataclass
+class ConversionStats:
+    """Counts every place the conversion drops data.
+
+    The whole point of this struct is that attrition is impossible to miss.
+    Silent per-testcase drops are a nasty failure mode: a change in the upstream
+    encoding could quietly shrink a ~28-test task down to a handful of tests with
+    no error at all, leaving every downstream pass@1 number computed against a
+    far weaker verifier than intended. The fix is not to stop dropping genuinely
+    malformed rows (one bad row must not kill a 444-task load) but to COUNT every
+    drop and report it, so an upstream format change surfaces loudly instead of
+    quietly eating tests. load_livecodebench_leetcode() raises if the aggregate
+    drop rate crosses a threshold, and always prints the breakdown.
+    """
+
+    leetcode_rows: int = 0
+    tasks_built: int = 0
+    rows_dropped_no_starter: int = 0
+    rows_dropped_no_tests: int = 0
+    rows_dropped_no_asserts: int = 0
+    raw_testcases: int = 0
+    asserts_built: int = 0
+    testcase_decode_failures: int = 0
+    dropped_task_ids: list[str] = field(default_factory=list)
+
+    @property
+    def testcases_dropped(self) -> int:
+        return self.raw_testcases - self.asserts_built
+
+    def summary(self) -> str:
+        rows_dropped = (
+            self.rows_dropped_no_starter
+            + self.rows_dropped_no_tests
+            + self.rows_dropped_no_asserts
+        )
+        tc_pct = (
+            100 * self.testcases_dropped / self.raw_testcases
+            if self.raw_testcases
+            else 0.0
+        )
+        return (
+            f"[adapters.livecodebench] leetcode_rows={self.leetcode_rows} "
+            f"tasks_built={self.tasks_built} rows_dropped={rows_dropped} "
+            f"(no_starter={self.rows_dropped_no_starter}, "
+            f"no_tests={self.rows_dropped_no_tests}, "
+            f"no_asserts={self.rows_dropped_no_asserts}) | "
+            f"raw_testcases={self.raw_testcases} asserts_built={self.asserts_built} "
+            f"testcases_dropped={self.testcases_dropped} ({tc_pct:.2f}%) "
+            f"decode_failures={self.testcase_decode_failures}"
+        )
 
 # Maps a release tag to its cumulative set of raw split files — LiveCodeBench
 # ships new problems as additional files, not a replaced/renamed single file.
@@ -117,7 +170,7 @@ def _load_raw_rows(release: str) -> list[dict]:
     return rows
 
 
-def _decode_test_cases(raw: str) -> list[dict]:
+def _decode_test_cases(raw: str, stats: ConversionStats | None = None) -> list[dict]:
     """Parse a LiveCodeBench test-case field into a list of {input, output} dicts.
 
     Tries plain JSON first (the common case, and always true for
@@ -139,7 +192,9 @@ def _decode_test_cases(raw: str) -> list[dict]:
             # A genuinely malformed test payload for this one problem — skip
             # it (mirrors the rest of this adapter's per-problem best-effort
             # policy: an unparseable row is dropped, not a hard failure for
-            # the whole dataset load).
+            # the whole dataset load). Counted so the drop is never silent.
+            if stats is not None:
+                stats.testcase_decode_failures += 1
             return []
 
     if isinstance(parsed, dict):
@@ -197,29 +252,51 @@ def _build_assertion(class_var: str, method_name: str, tc: dict) -> str | None:
     return f"assert {class_var}.{method_name}({args_str}) == {expected!r}"
 
 
-def _convert_problem(problem: dict) -> CodeTask | None:
+def _convert_problem(
+    problem: dict, stats: ConversionStats | None = None
+) -> CodeTask | None:
     """Convert one raw LeetCode-platform LiveCodeBench row into a CodeTask.
 
     Returns None if the problem cannot be converted (unparseable starter
     code, no usable test cases) — the caller drops these and reports a count
     rather than failing the whole dataset load on one bad problem.
+
+    When `stats` is provided, every drop (whole row or individual test case)
+    is tallied there so the loader can report attrition instead of it being
+    silent.
     """
+    task_id_for_log = str(
+        problem.get("question_id") or problem.get("question_title") or "unknown"
+    )
     parsed_stub = _parse_starter_code(problem.get("starter_code", ""))
     if parsed_stub is None:
+        if stats is not None:
+            stats.rows_dropped_no_starter += 1
+            stats.dropped_task_ids.append(task_id_for_log)
         return None
     class_name, method_name = parsed_stub
 
-    all_tests = _decode_test_cases(problem.get("public_test_cases", "")) + _decode_test_cases(
-        problem.get("private_test_cases", "")
-    )
+    all_tests = _decode_test_cases(
+        problem.get("public_test_cases", ""), stats
+    ) + _decode_test_cases(problem.get("private_test_cases", ""), stats)
+    if stats is not None:
+        stats.raw_testcases += len(all_tests)
     if not all_tests:
+        if stats is not None:
+            stats.rows_dropped_no_tests += 1
+            stats.dropped_task_ids.append(task_id_for_log)
         return None
 
     class_var = "sol"
     assertions = [
         a for tc in all_tests if (a := _build_assertion(class_var, method_name, tc)) is not None
     ]
+    if stats is not None:
+        stats.asserts_built += len(assertions)
     if not assertions:
+        if stats is not None:
+            stats.rows_dropped_no_asserts += 1
+            stats.dropped_task_ids.append(task_id_for_log)
         return None
 
     starter_code = problem["starter_code"].rstrip()
@@ -249,9 +326,18 @@ def _convert_problem(problem: dict) -> CodeTask | None:
     )
 
 
+# If more than this fraction of decoded test cases fail to become asserts, the
+# loader raises rather than returning a silently-weakened dataset. 0.0 raw data
+# today (measured: 12766/12766 asserts built, 0% dropped); a small nonzero
+# tolerance leaves room for a genuinely malformed future row without masking the
+# kind of large-scale attrition that would indicate an upstream format change.
+_MAX_TESTCASE_DROP_RATE = 0.00
+
+
 def load_livecodebench_leetcode(
     release: str = _DEFAULT_RELEASE,
     limit: int | None = None,
+    max_testcase_drop_rate: float = _MAX_TESTCASE_DROP_RATE,
 ) -> list[CodeTask]:
     """Load and convert LiveCodeBench's LeetCode-platform problems into CodeTasks.
 
@@ -267,7 +353,9 @@ def load_livecodebench_leetcode(
             dataset iteration order) — useful for a quick smoke slice.
 
     Raises:
-        RuntimeError: huggingface_hub is not installed.
+        RuntimeError: huggingface_hub is not installed, or test-case attrition
+            exceeds `max_testcase_drop_rate` (a signal the upstream encoding
+            changed and asserts are being silently discarded).
         ValueError: unknown release tag, or limit < 1 when provided.
     """
     if limit is not None and limit < 1:
@@ -276,20 +364,32 @@ def load_livecodebench_leetcode(
     raw_rows = _load_raw_rows(release)
     leetcode_rows = [r for r in raw_rows if r.get("platform") == "leetcode"]
 
+    stats = ConversionStats(leetcode_rows=len(leetcode_rows))
     tasks: list[CodeTask] = []
-    skipped = 0
     for row in leetcode_rows:
-        task = _convert_problem(row)
+        task = _convert_problem(row, stats)
         if task is None:
-            skipped += 1
             continue
         tasks.append(task)
+    stats.tasks_built = len(tasks)
 
-    if skipped:
-        print(
-            f"[adapters.livecodebench] skipped {skipped}/{len(leetcode_rows)} "
-            "LeetCode rows (unparseable starter code or test cases)"
-        )
+    # Always report the full attrition breakdown — never let a drop be silent.
+    print(stats.summary())
+
+    # Guardrail: a large-scale test-case drop almost certainly means the upstream
+    # encoding changed and we are about to grade against a gutted verifier. Fail
+    # loudly rather than return a dataset that looks fine but is not.
+    if stats.raw_testcases:
+        drop_rate = stats.testcases_dropped / stats.raw_testcases
+        if drop_rate > max_testcase_drop_rate:
+            raise RuntimeError(
+                f"LiveCodeBench test-case attrition {drop_rate:.2%} exceeds the "
+                f"allowed {max_testcase_drop_rate:.2%} "
+                f"({stats.testcases_dropped}/{stats.raw_testcases} test cases dropped). "
+                "This usually means the upstream test-case encoding changed and "
+                "asserts are being silently discarded. Inspect the adapter before "
+                "trusting any pass@1 computed against this data.\n" + stats.summary()
+            )
 
     if limit is not None:
         tasks = tasks[:limit]

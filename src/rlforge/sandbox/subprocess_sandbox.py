@@ -33,7 +33,7 @@ from pathlib import Path
 
 from rlforge.classify.taxonomy import classify_failure
 from rlforge.sandbox.base import SandboxConfig
-from rlforge.sandbox.preamble import SAFETY_PREAMBLE
+from rlforge.sandbox.preamble import LIVECODEBENCH_IMPORTS, SAFETY_PREAMBLE
 from rlforge.schema.execution import ExecutionResult
 
 # Unique token printed only after the test code completes. Required (with exit
@@ -50,7 +50,9 @@ def build_script(candidate_code: str, test_code: str) -> str:
     code both ran without raising or exiting early.
     """
     return (
-        SAFETY_PREAMBLE
+        LIVECODEBENCH_IMPORTS
+        + "\n"
+        + SAFETY_PREAMBLE
         + "\n\n"
         + candidate_code.rstrip()
         + "\n\n"

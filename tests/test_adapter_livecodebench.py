@@ -18,6 +18,7 @@ import zlib
 import pytest
 
 from rlforge.adapters.livecodebench import (
+    ConversionStats,
     _build_assertion,
     _convert_problem,
     _decode_test_cases,
@@ -137,6 +138,37 @@ def test_convert_problem_builds_runnable_task():
     assert len(suite.asserts) == 4
     for line in suite.asserts:
         compile(line, "<test>", "exec")
+
+
+def test_convert_problem_accounts_every_testcase_in_stats():
+    """A drop must never be silent: stats must reconcile raw test cases with
+    asserts built, so a reintroduced silent-drop path fails this test."""
+    problem = {
+        "question_id": 2727,
+        "platform": "leetcode",
+        "starter_code": _REAL_STARTER_CODE,
+        "question_content": "Count seniors.",
+        "public_test_cases": _REAL_PUBLIC_TEST_CASES,  # 2 cases
+        "private_test_cases": _REAL_PRIVATE_TEST_CASES,  # 1 case
+    }
+    stats = ConversionStats()
+    _convert_problem(problem, stats)
+    assert stats.raw_testcases == 3
+    assert stats.asserts_built == 3
+    assert stats.testcases_dropped == 0
+
+
+def test_convert_problem_counts_dropped_row_with_no_starter():
+    stats = ConversionStats()
+    _convert_problem({"question_id": "x", "starter_code": ""}, stats)
+    assert stats.rows_dropped_no_starter == 1
+    assert stats.dropped_task_ids == ["x"]
+
+
+def test_decode_counts_decode_failures_in_stats():
+    stats = ConversionStats()
+    assert _decode_test_cases("garbage-not-json-not-b64!!", stats) == []
+    assert stats.testcase_decode_failures == 1
 
 
 def test_convert_problem_returns_none_for_unparseable_starter_code():
