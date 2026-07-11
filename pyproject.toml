@@ -27,13 +27,24 @@ data = [
     "huggingface_hub>=0.20",
 ]
 model = [
-    # Local model inference (models/qwen.py). torch left unpinned — install
-    # the CUDA build appropriate for this host manually, same convention as
-    # ReasoningLab's pyproject.toml. No bitsandbytes: this host (GB10, 128GB
-    # unified memory) loads natively in bf16, no quantization needed.
+    # Local model inference (models/qwen.py). Loaded natively in bf16, no
+    # quantization. torch is pinned and sourced from the CUDA 13.0 wheel index
+    # below so `uv sync --extra model` installs the CUDA build (not the default
+    # CPU wheel) and keeps it managed rather than pruning it on the next sync.
+    "torch==2.12.1",
     "transformers>=4.40",
     "accelerate>=0.30",   # device_map="auto"
 ]
+
+# Source torch from PyTorch's CUDA 13.0 wheel index; without this uv would
+# resolve the default (CPU) wheel. Adjust to match the target CUDA toolkit.
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
