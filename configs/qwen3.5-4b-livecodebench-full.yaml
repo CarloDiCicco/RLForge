@@ -1,0 +1,46 @@
+# Baseline #2: Qwen3.5-4B (instruct, non-thinking mode, zero-shot) against the
+# FULL LiveCodeBench LeetCode-platform set (444 tasks, assert-graded). Second
+# citable baseline, the harder/more-diverse companion to the HumanEval+ run
+# (qwen3.5-4b-humaneval-full.yaml). See RESEARCH_LOG.md for scope (LeetCode-only,
+# not contamination-safe for Qwen3.5) and the data-attrition audit.
+#
+# Sampling settings (generation:) are IDENTICAL to the HumanEval+ baseline so
+# the two numbers are comparable — Qwen3.5's official model-card values for
+# INSTRUCT (non-thinking) mode. A thinking-mode run is a separate experiment.
+#
+# TIMEOUT: sandbox timeout_s = 60s, applied to the WHOLE task (all ~29 asserts
+# run together in one process, one timeout — not per-assert). LiveCodeBench's
+# own judge uses ~10s PER test case; our single-process model means a per-task
+# budget must cover every assert sequentially, so 60s is deliberately generous.
+# Correct solutions finish in well under a second (HumanEval+ ran at 0.07s mean,
+# 0 timeouts), so this only bounds pathological/infinite-loop cases. A faithful
+# per-assert timeout is tracked as follow-up work, not needed for this baseline.
+#
+# Usage:
+#   python scripts/run_experiment.py configs/qwen3.5-4b-livecodebench-full.yaml
+
+experiment_id: qwen3.5-4b-livecodebench-full
+seed: 0
+model_id: Qwen/Qwen3.5-4B
+tasks_file: data/livecodebench_leetcode.jsonl
+# max_tasks omitted: run all 444 tasks.
+
+generation:
+  max_new_tokens: 1024
+  do_sample: true
+  temperature: 0.7
+  top_p: 0.8
+  top_k: 20
+  min_p: 0.0
+  repetition_penalty: 1.0
+  presence_penalty: 1.5
+  enable_thinking: false
+
+run:
+  out_dir: runs
+  n_samples: 1
+  ks: [1]
+  grading_role: hidden
+  sandbox_config:
+    backend: bwrap
+    timeout_s: 60.0
