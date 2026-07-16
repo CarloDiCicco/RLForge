@@ -35,26 +35,52 @@ from rlforge.classify.taxonomy import classify_failure
 from rlforge.sandbox.base import SandboxConfig
 from rlforge.sandbox.preamble import LIVECODEBENCH_IMPORTS, SAFETY_PREAMBLE
 from rlforge.schema.execution import ExecutionResult
+from rlforge.schema.testsuite import TestKind
 
 # Unique token printed only after the test code completes. Required (with exit
 # code 0) before we report passed=True — proves execution reached the end.
 _PASS_SENTINEL = "__RLFORGE_TESTS_COMPLETE_9e4d1c7a__"
 
+# Name the candidate source is bound to (as an inert string) for stdin/stdout
+# mode, where the test fragment compiles+execs it once per IO pair rather than
+# running it inline. Must match the name the compiler's stdin_stdout fragment
+# reads (verify/compiler.py). Kept obscure so candidate code cannot collide.
+CANDIDATE_SRC_VAR = "__RLFORGE_CANDIDATE_SRC_7f3a__"
+
 _MB = 1024 * 1024
 
 
-def build_script(candidate_code: str, test_code: str) -> str:
+def build_script(
+    candidate_code: str, test_code: str, mode: TestKind = "assert"
+) -> str:
     """Assemble preamble + candidate + test + sentinel into one runnable script.
 
     The sentinel print is the last statement, reached only if candidate and test
     code both ran without raising or exiting early.
+
+    `mode` selects how the candidate is placed, matching the test suite kind:
+
+      - "assert": the candidate is pasted and executed inline. It defines a
+        function the appended asserts then call. Runs once.
+
+      - "stdin_stdout": the candidate is a whole program that reads stdin and
+        prints stdout, so it must NOT run inline — pasted inline it would execute
+        once at import on empty stdin (EOFError) before the tests run, and a
+        top-level program cannot be re-invoked per IO pair. Instead the candidate
+        source is bound to CANDIDATE_SRC_VAR as an inert string; the test fragment
+        (from verify/compiler.py) compiles it and execs it once per pair with
+        stdin/stdout redirected.
     """
+    if mode == "stdin_stdout":
+        candidate_block = f"{CANDIDATE_SRC_VAR} = {candidate_code!r}"
+    else:
+        candidate_block = candidate_code.rstrip()
     return (
         LIVECODEBENCH_IMPORTS
         + "\n"
         + SAFETY_PREAMBLE
         + "\n\n"
-        + candidate_code.rstrip()
+        + candidate_block
         + "\n\n"
         + test_code.lstrip()
         + f'\nprint("{_PASS_SENTINEL}")\n'
@@ -112,8 +138,10 @@ class SubprocessSandbox:
         to skip the NPROC cap (bwrap must fork to launch the interpreter)."""
         return _make_limit_preexec(self.config, apply_nproc=True)
 
-    def run(self, candidate_code: str, test_code: str) -> ExecutionResult:
-        script = build_script(candidate_code, test_code)
+    def run(
+        self, candidate_code: str, test_code: str, mode: TestKind = "assert"
+    ) -> ExecutionResult:
+        script = build_script(candidate_code, test_code, mode)
         tmp_path: Path | None = None
         try:
             # Write the script to a temp file (not -c): no argv length limit, and

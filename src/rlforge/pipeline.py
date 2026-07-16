@@ -250,12 +250,13 @@ def run_pipeline(
                     )
                 else:
                     # suite_to_test_code raises NotImplementedError for kinds
-                    # M1 cannot run (stdin_stdout/checker) — intentionally not
-                    # caught here; see verify/compiler.py and Step 7.5. An
-                    # unsupported suite must stop the run, never be silently
-                    # scored as a pass.
+                    # not yet runnable (checker) — intentionally not caught
+                    # here; see verify/compiler.py. An unsupported suite must
+                    # stop the run, never be silently scored as a pass. assert
+                    # and stdin_stdout are both handled; mode=suite.kind tells
+                    # the sandbox how to assemble the candidate.
                     test_code = suite_to_test_code(suite, task.entry_point)
-                    result = sandbox.run(res.code, test_code)
+                    result = sandbox.run(res.code, test_code, mode=suite.kind)
 
                 exec_record = ExecutionRecord(
                     execution_result_id=new_execution_id(sample_id, suite_name),

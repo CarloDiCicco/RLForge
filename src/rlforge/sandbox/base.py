@@ -16,11 +16,14 @@ interpretable against the cage that produced it.
 from __future__ import annotations
 
 import hashlib
-from typing import Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
 from rlforge.schema.execution import ExecutionResult
+
+if TYPE_CHECKING:
+    from rlforge.schema.testsuite import TestKind
 
 # Backends selectable from config. "subprocess" = A+B (rlimit, no namespaces);
 # "bwrap" = C (kernel-enforced cage). "container" is reserved, not implemented.
@@ -80,8 +83,15 @@ class Sandbox(Protocol):
 
     config: SandboxConfig
 
-    def run(self, candidate_code: str, test_code: str) -> ExecutionResult:
+    def run(
+        self, candidate_code: str, test_code: str, mode: "TestKind" = "assert"
+    ) -> ExecutionResult:
         """Execute candidate + test code; return the structured outcome.
+
+        `mode` selects how the candidate is assembled into the script (see
+        subprocess_sandbox.build_script): "assert" runs the candidate inline as a
+        function definition; "stdin_stdout" binds it as an inert string the test
+        fragment execs once per IO pair with stdin/stdout redirected.
 
         Must not raise on candidate misbehavior (crashes, timeouts, bad syntax):
         those are reported inside the ExecutionResult. May raise only on

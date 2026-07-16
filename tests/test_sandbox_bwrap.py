@@ -12,6 +12,8 @@ from rlforge.classify.taxonomy import FailureType
 from rlforge.sandbox import make_sandbox
 from rlforge.sandbox.base import Sandbox, SandboxConfig
 from rlforge.sandbox.bwrap_sandbox import BwrapSandbox, bwrap_usable
+from rlforge.schema.testsuite import IOPair, TestSuite
+from rlforge.verify.compiler import suite_to_test_code
 
 pytestmark = pytest.mark.skipif(
     not bwrap_usable(),
@@ -78,3 +80,20 @@ def test_repo_files_not_visible():
     )
     r = _bwrap().run(code, "assert add(1, 1) == 2")
     assert r.passed
+
+
+def test_stdin_stdout_candidate_runs_inside_cage():
+    # The stdin/stdout harness must work under the full bwrap cage too, not only
+    # the subprocess backend: candidate bound as a string, execed once per pair
+    # with stdin redirected. A correct program passes; a wrong one is ASSERTION.
+    suite = TestSuite(
+        kind="stdin_stdout",
+        io_pairs=[IOPair(stdin="2 3\n", stdout="5\n"), IOPair(stdin="10 20\n", stdout="30\n")],
+    )
+    tc = suite_to_test_code(suite)
+    good = "a, b = map(int, input().split())\nprint(a + b)"
+    bad = "a, b = map(int, input().split())\nprint(a - b)"
+    assert _bwrap().run(good, tc, mode="stdin_stdout").passed
+    r = _bwrap().run(bad, tc, mode="stdin_stdout")
+    assert not r.passed
+    assert r.failure_type == FailureType.ASSERTION
