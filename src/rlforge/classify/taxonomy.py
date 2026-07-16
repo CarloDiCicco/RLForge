@@ -13,11 +13,13 @@ leaf module the whole codebase can use freely.
 Classification priority (first match wins) — the order is deliberate:
   1. PASS       – passed is True (exit 0 AND sentinel; see sandbox executor)
   2. EXTRACTION – no runnable code was extracted from the model output
-  3. TIMEOUT    – process killed for exceeding the wall-clock limit
+  3. TIMEOUT    – process killed for exceeding a time budget (wall-clock timeout
+                  or the CPU-time cap; both mean the solution ran too long)
   4. SYNTAX     – SyntaxError / IndentationError / TabError (code never ran)
   5. ASSERTION  – AssertionError (tests ran; logic is wrong)
   6. RUNTIME    – any other non-empty stderr (NameError, TypeError, …)
-  7. UNKNOWN    – failed with empty stderr (OOM / hard crash / C-level exit)
+  7. UNKNOWN    – failed with empty stderr and no time-budget kill (OOM, segfault,
+                  or a C-level exit); a genuine alarm worth inspecting
 
 Separating SYNTAX from ASSERTION matters for repair analysis: unparseable code
 needs a different fix strategy than parseable code with wrong logic, and a model

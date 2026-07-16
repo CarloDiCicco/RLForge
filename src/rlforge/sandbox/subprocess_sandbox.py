@@ -154,10 +154,21 @@ class SubprocessSandbox:
         # Strip the sentinel so downstream sees only real model output.
         clean_stdout = proc.stdout.replace(_PASS_SENTINEL, "").rstrip("\n")
 
+        # A candidate that busts the CPU-time cap (RLIMIT_CPU) is SIGKILLed by the
+        # kernel — the wall-clock subprocess.run timeout never fires, so this path
+        # (not _timeout_result) handles it. Route it to `timed_out` so it is
+        # classified as TIMEOUT, not UNKNOWN: exceeding the compute budget is a
+        # timeout regardless of whether the wall-clock or CPU limit tripped first.
+        # subprocess reports a signal kill two ways depending on backend: the
+        # direct child is -signal (subprocess backend), while bwrap relays its
+        # inner child's death as 128+signal. Both are covered below.
+        killed_by_signal = proc.returncode < 0 or proc.returncode >= 128
+        cpu_timed_out = killed_by_signal and not proc.stderr.strip()
+
         failure_type = classify_failure(
             passed=passed,
             extracted=True,        # code reached the sandbox; extraction succeeded
-            timed_out=False,
+            timed_out=cpu_timed_out,
             stderr=proc.stderr,
         )
         return ExecutionResult(
