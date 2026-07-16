@@ -44,3 +44,8 @@ run:
   sandbox_config:
     backend: bwrap
     timeout_s: 60.0
+    # CPU-time cap set equal to the wall-clock timeout so neither silently
+    # dominates: LeetCode tasks run ~29 asserts sequentially in one process and
+    # need the full 60s budget. Left at the 10s default, the CPU limit would kill
+    # slow-but-legitimate solutions long before the advertised 60s wall budget.
+    cpu_s: 60
