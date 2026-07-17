@@ -21,7 +21,9 @@ from rlforge.adapters.livecodebench import (
     ConversionStats,
     _build_assertion,
     _convert_problem,
+    _convert_stdio_problem,
     _decode_test_cases,
+    _is_stdio_row,
     _parse_starter_code,
 )
 from rlforge.sandbox.subprocess_sandbox import SubprocessSandbox
@@ -214,11 +216,104 @@ def test_converted_task_asserts_actually_run_against_a_real_solution():
     assert result.passed
 
 
+# --- stdin/stdout adapter (AtCoder/Codeforces, testtype "stdin") ---
+#
+# Real stdin/stdout row shape captured this session from
+# livecodebench/code_generation_lite (release_v1, question_id=1873_A, a
+# Codeforces "three cards" problem): empty starter_code, testtype "stdin",
+# input/output are raw stdin text and expected stdout.
+_REAL_STDIO_PUBLIC = json.dumps(
+    [
+        {
+            "input": "6\nabc\nacb\nbac\nbca\ncab\ncba\n",
+            "output": "YES\nYES\nYES\nNO\nNO\nYES\n",
+            "testtype": "stdin",
+        }
+    ]
+)
+
+
+def _stdio_problem(**overrides) -> dict:
+    problem = {
+        "question_id": "1873_A",
+        "platform": "codeforces",
+        "difficulty": "easy",
+        "contest_date": "2023-09-01T00:00:00",
+        "starter_code": "",
+        "question_content": "There are three cards with letters a, b, c ...",
+        "public_test_cases": _REAL_STDIO_PUBLIC,
+        "private_test_cases": "",
+    }
+    problem.update(overrides)
+    return problem
+
+
+def test_is_stdio_row_true_for_stdin_testtype():
+    assert _is_stdio_row(_stdio_problem()) is True
+
+
+def test_is_stdio_row_false_for_functional_leetcode():
+    leetcode = {"public_test_cases": json.dumps([{"input": "[1]", "output": "1", "testtype": "functional"}])}
+    assert _is_stdio_row(leetcode) is False
+
+
+def test_convert_stdio_problem_builds_stdin_stdout_suite():
+    task = _convert_stdio_problem(_stdio_problem())
+    assert task is not None
+    assert task.task_id == "LCB/1873_A"
+    assert task.source == "livecodebench_stdio"
+    assert task.entry_point is None  # whole program, not a named function
+    assert task.metadata["platform"] == "codeforces"
+
+    suite = task.test_suites["hidden"]
+    assert suite.kind == "stdin_stdout"
+    assert len(suite.io_pairs) == 1
+    assert suite.io_pairs[0].stdin.startswith("6\n")
+    assert suite.io_pairs[0].stdout.startswith("YES")
+
+
+def test_convert_stdio_problem_accounts_every_testcase_in_stats():
+    stats = ConversionStats()
+    _convert_stdio_problem(_stdio_problem(), stats)
+    assert stats.raw_stdio_testcases == 1
+    assert stats.io_pairs_built == 1
+    assert stats.stdio_testcases_dropped == 0
+
+
+def test_convert_stdio_problem_counts_dropped_row_with_no_tests():
+    stats = ConversionStats()
+    result = _convert_stdio_problem(
+        _stdio_problem(public_test_cases="", private_test_cases=""), stats
+    )
+    assert result is None
+    assert stats.rows_dropped_no_io_pairs == 1
+    assert stats.dropped_task_ids == ["1873_A"]
+
+
+def test_converted_stdio_task_runs_against_a_real_solution():
+    task = _convert_stdio_problem(_stdio_problem())
+    suite = task.test_suites["hidden"]
+    test_code = suite_to_test_code(suite)
+    # Correct: "abc" reachable with <=1 swap iff at most 2 positions differ.
+    solution = (
+        "t = int(input())\n"
+        "for _ in range(t):\n"
+        "    s = input().strip()\n"
+        "    diff = sum(1 for i, c in enumerate(s) if c != 'abc'[i])\n"
+        "    print('YES' if diff <= 2 else 'NO')\n"
+    )
+    result = SubprocessSandbox().run(solution, test_code, mode="stdin_stdout")
+    assert result.passed
+
+
 # --- Network-touching tests: real huggingface_hub download path ---
 
 pytest.importorskip("huggingface_hub")
 
-from rlforge.adapters.livecodebench import load_livecodebench_leetcode  # noqa: E402
+from rlforge.adapters.livecodebench import (  # noqa: E402
+    load_livecodebench_leetcode,
+    load_livecodebench_stdio,
+)
 
 
 def test_load_livecodebench_leetcode_returns_valid_codetasks():
@@ -239,3 +334,20 @@ def test_load_livecodebench_leetcode_rejects_unknown_release():
 def test_load_livecodebench_leetcode_rejects_bad_limit():
     with pytest.raises(ValueError, match="limit must be"):
         load_livecodebench_leetcode(release="release_v1", limit=0)
+
+
+def test_load_livecodebench_stdio_returns_valid_codetasks():
+    tasks = load_livecodebench_stdio(release="release_v1", limit=5)
+    assert 0 < len(tasks) <= 5
+    for task in tasks:
+        assert task.source == "livecodebench_stdio"
+        assert task.task_id.startswith("LCB/")
+        assert task.entry_point is None
+        suite = task.test_suites["hidden"]
+        assert suite.kind == "stdin_stdout"
+        assert suite.io_pairs
+
+
+def test_load_livecodebench_stdio_rejects_bad_limit():
+    with pytest.raises(ValueError, match="limit must be"):
+        load_livecodebench_stdio(release="release_v1", limit=0)

@@ -62,7 +62,7 @@ import zlib
 from dataclasses import dataclass, field
 
 from rlforge.schema.task import CodeTask
-from rlforge.schema.testsuite import TestSuite
+from rlforge.schema.testsuite import IOPair, TestSuite
 
 
 @dataclass
@@ -90,9 +90,23 @@ class ConversionStats:
     testcase_decode_failures: int = 0
     dropped_task_ids: list[str] = field(default_factory=list)
 
+    # stdin/stdout conversion (load_livecodebench_stdio). Kept as separate
+    # counters, not folded into the assert ones, because the two conversions
+    # drop for different reasons: a stdin task has no starter stub and no
+    # asserts to build, so rows_dropped_no_starter/no_asserts would be
+    # meaningless here. io_pairs_built is the stdin analogue of asserts_built.
+    stdio_rows: int = 0
+    rows_dropped_no_io_pairs: int = 0
+    raw_stdio_testcases: int = 0
+    io_pairs_built: int = 0
+
     @property
     def testcases_dropped(self) -> int:
         return self.raw_testcases - self.asserts_built
+
+    @property
+    def stdio_testcases_dropped(self) -> int:
+        return self.raw_stdio_testcases - self.io_pairs_built
 
     def summary(self) -> str:
         rows_dropped = (
@@ -113,6 +127,22 @@ class ConversionStats:
             f"no_asserts={self.rows_dropped_no_asserts}) | "
             f"raw_testcases={self.raw_testcases} asserts_built={self.asserts_built} "
             f"testcases_dropped={self.testcases_dropped} ({tc_pct:.2f}%) "
+            f"decode_failures={self.testcase_decode_failures}"
+        )
+
+    def stdio_summary(self) -> str:
+        tc_pct = (
+            100 * self.stdio_testcases_dropped / self.raw_stdio_testcases
+            if self.raw_stdio_testcases
+            else 0.0
+        )
+        return (
+            f"[adapters.livecodebench] stdio_rows={self.stdio_rows} "
+            f"tasks_built={self.tasks_built} "
+            f"rows_dropped_no_io_pairs={self.rows_dropped_no_io_pairs} | "
+            f"raw_testcases={self.raw_stdio_testcases} "
+            f"io_pairs_built={self.io_pairs_built} "
+            f"testcases_dropped={self.stdio_testcases_dropped} ({tc_pct:.2f}%) "
             f"decode_failures={self.testcase_decode_failures}"
         )
 
@@ -326,6 +356,82 @@ def _convert_problem(
     )
 
 
+def _is_stdio_row(problem: dict) -> bool:
+    """True iff this row is judged by stdin/stdout (testtype "stdin").
+
+    Routes on the decoded test cases' `testtype`, not the platform string:
+    LeetCode rows carry testtype "functional", AtCoder/Codeforces carry "stdin"
+    (verified against real data). Reading testtype means a new stdin/stdout
+    platform is picked up automatically. Only public_test_cases is inspected —
+    it is always plain JSON and shares the row's testtype, so this avoids the
+    heavier base64/zlib/pickle decode of private cases just to classify.
+    """
+    cases = _decode_test_cases(problem.get("public_test_cases", ""))
+    return any(c.get("testtype") == "stdin" for c in cases)
+
+
+def _convert_stdio_problem(
+    problem: dict, stats: ConversionStats | None = None
+) -> CodeTask | None:
+    """Convert one raw stdin/stdout LiveCodeBench row into a CodeTask.
+
+    These are the AtCoder/Codeforces problems (testtype "stdin"): the candidate
+    is a whole program reading stdin and printing stdout, not a function. Unlike
+    the LeetCode converter this needs no starter stub and no ast.literal_eval of
+    arguments — each raw {input, output} test case maps directly to an IOPair,
+    and grading runs through the stdin_stdout harness (verify/compiler.py).
+
+    Returns None if the row has no usable test cases (dropped, counted in stats),
+    matching the per-problem best-effort policy of _convert_problem.
+    """
+    task_id_for_log = str(
+        problem.get("question_id") or problem.get("question_title") or "unknown"
+    )
+
+    all_tests = _decode_test_cases(
+        problem.get("public_test_cases", ""), stats
+    ) + _decode_test_cases(problem.get("private_test_cases", ""), stats)
+    if stats is not None:
+        stats.raw_stdio_testcases += len(all_tests)
+
+    io_pairs = [
+        IOPair(stdin=tc.get("input", ""), stdout=tc.get("output", ""))
+        for tc in all_tests
+        # Both fields must be present strings; a malformed case is skipped, not
+        # fatal, mirroring _build_assertion's per-testcase best-effort policy.
+        if isinstance(tc.get("input"), str) and isinstance(tc.get("output"), str)
+    ]
+    if stats is not None:
+        stats.io_pairs_built += len(io_pairs)
+    if not io_pairs:
+        if stats is not None:
+            stats.rows_dropped_no_io_pairs += 1
+            stats.dropped_task_ids.append(task_id_for_log)
+        return None
+
+    # No starter code for stdin/stdout problems — the prompt is the problem
+    # statement alone. build_prompt() adds the "return one fenced code block"
+    # instruction at generation time, same as the LeetCode path.
+    prompt = (problem.get("question_content", "") or "").strip()
+
+    question_id = problem.get("question_id") or problem.get("question_title") or "unknown"
+    return CodeTask(
+        task_id=f"LCB/{question_id}",
+        source="livecodebench_stdio",
+        prompt=prompt,
+        # No entry_point: the candidate is a whole program, not a named function.
+        test_suites={
+            "hidden": TestSuite(kind="stdin_stdout", io_pairs=io_pairs),
+        },
+        timeout_s=10.0,
+        metadata={
+            "difficulty": problem.get("difficulty"),
+            "contest_date": problem.get("contest_date"),
+            "platform": problem.get("platform"),
+        },
+    )
+
+
 # If more than this fraction of decoded test cases fail to become asserts, the
 # loader raises rather than returning a silently-weakened dataset. 0.0 raw data
 # today (measured: 12766/12766 asserts built, 0% dropped); a small nonzero
@@ -389,6 +495,66 @@ def load_livecodebench_leetcode(
                 "This usually means the upstream test-case encoding changed and "
                 "asserts are being silently discarded. Inspect the adapter before "
                 "trusting any pass@1 computed against this data.\n" + stats.summary()
+            )
+
+    if limit is not None:
+        tasks = tasks[:limit]
+    return tasks
+
+
+def load_livecodebench_stdio(
+    release: str = _DEFAULT_RELEASE,
+    limit: int | None = None,
+    max_testcase_drop_rate: float = _MAX_TESTCASE_DROP_RATE,
+) -> list[CodeTask]:
+    """Load and convert LiveCodeBench's stdin/stdout problems into CodeTasks.
+
+    The complement of load_livecodebench_leetcode: only rows judged by
+    stdin/stdout (AtCoder/Codeforces, `testtype == "stdin"`) are considered.
+    These are graded by the stdin_stdout harness (verify/compiler.py). Rows with
+    no usable test cases are dropped and counted, never silently.
+
+    Rows are selected by their decoded test cases' `testtype == "stdin"`, not by
+    platform string, so a platform whose judging style is stdin/stdout is picked
+    up regardless of its name. LeetCode rows (testtype "functional") are excluded.
+
+    Args:
+        release: which cumulative LiveCodeBench release to load (default latest).
+        limit: keep only the first `limit` converted tasks (smoke slice).
+
+    Raises:
+        RuntimeError: huggingface_hub is not installed, or test-case attrition
+            exceeds `max_testcase_drop_rate`.
+        ValueError: unknown release tag, or limit < 1 when provided.
+    """
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be >= 1 when provided")
+
+    raw_rows = _load_raw_rows(release)
+    stdio_rows = [r for r in raw_rows if _is_stdio_row(r)]
+
+    stats = ConversionStats(stdio_rows=len(stdio_rows))
+    tasks: list[CodeTask] = []
+    for row in stdio_rows:
+        task = _convert_stdio_problem(row, stats)
+        if task is None:
+            continue
+        tasks.append(task)
+    stats.tasks_built = len(tasks)
+
+    print(stats.stdio_summary())
+
+    if stats.raw_stdio_testcases:
+        drop_rate = stats.stdio_testcases_dropped / stats.raw_stdio_testcases
+        if drop_rate > max_testcase_drop_rate:
+            raise RuntimeError(
+                f"LiveCodeBench stdin/stdout test-case attrition {drop_rate:.2%} "
+                f"exceeds the allowed {max_testcase_drop_rate:.2%} "
+                f"({stats.stdio_testcases_dropped}/{stats.raw_stdio_testcases} "
+                "test cases dropped). This usually means the upstream test-case "
+                "encoding changed and IO pairs are being silently discarded. "
+                "Inspect the adapter before trusting any pass@1 computed against "
+                "this data.\n" + stats.stdio_summary()
             )
 
     if limit is not None:
