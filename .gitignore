@@ -200,6 +200,7 @@ data/*
 !data/.gitkeep
 !data/humaneval_plus.jsonl
 !data/livecodebench_leetcode.jsonl
+!data/livecodebench_stdin_stdout.jsonl
 runs/*
 !runs/.gitkeep
 outputs/
