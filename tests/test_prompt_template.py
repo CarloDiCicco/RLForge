@@ -34,6 +34,32 @@ def test_build_prompt_places_stub_inside_a_fence():
     assert built[fence_start:].rstrip().endswith("```")
 
 
+def test_build_prompt_does_not_double_fence_a_prefenced_prompt():
+    """Regression: the LiveCodeBench-LeetCode adapter stores a prose statement
+    that already ends with its own ```python stub fence. Wrapping it again put
+    the English statement inside a ```python fence and left a doubled ``` at the
+    end (found by reading final_prompt back out of a run's generations.jsonl)."""
+    prefenced = (
+        "You are given an array.\n\nReturn its length.\n\n"
+        "```python\nclass Solution:\n    def f(self, a): ...\n```"
+    )
+    built = build_prompt(_task(prompt=prefenced))
+    # Only the stub's own fence, plus the two in the instruction sentence.
+    assert built.count("```") == 4
+    assert not built.rstrip().endswith("```\n```")
+    # The prose must NOT be inside a fence: statement comes after the
+    # instruction as plain text.
+    assert "explanation.\n\nYou are given an array." in built
+
+
+def test_build_prompt_still_fences_a_bare_stub():
+    """HumanEval+ stores a bare stub (no fence) — that must still get wrapped,
+    unchanged from the behaviour its baseline was produced with."""
+    built = build_prompt(_task())
+    assert built.count("```") == 4
+    assert "```python\ndef add" in built
+
+
 def test_prompt_template_id_is_versioned_string():
     assert PROMPT_TEMPLATE_ID == "generic_instruct_v1"
 

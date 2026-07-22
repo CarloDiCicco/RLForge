@@ -252,6 +252,19 @@ def test_is_stdio_row_true_for_stdin_testtype():
     assert _is_stdio_row(_stdio_problem()) is True
 
 
+def test_is_stdio_row_falls_back_to_private_when_public_empty():
+    """Regression: release_v6's abc350_c has NO public test cases but 3 valid
+    private stdin cases. Classifying on public alone silently dropped it (caught
+    by reconciling 1054 converted tasks against the dataset's 1055 rows)."""
+    row = _stdio_problem(
+        public_test_cases="[]",
+        private_test_cases=_encode_private(
+            [{"input": "1\n", "output": "0\n", "testtype": "stdin"}]
+        ),
+    )
+    assert _is_stdio_row(row) is True
+
+
 def test_is_stdio_row_false_for_functional_leetcode():
     leetcode = {"public_test_cases": json.dumps([{"input": "[1]", "output": "1", "testtype": "functional"}])}
     assert _is_stdio_row(leetcode) is False

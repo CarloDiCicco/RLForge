@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from rlforge.pipeline import GenerateFn, GenOutput
-from rlforge.prompt_template.default_prompt_template import PROMPT_TEMPLATE_ID, build_prompt
+from rlforge.prompt_template import build_prompt_for_task
 from rlforge.schema.task import CodeTask
 
 
@@ -85,7 +85,10 @@ def make_qwen_generate_fn(
     """
 
     def generate_fn(task: CodeTask, sample_idx: int) -> GenOutput:
-        final_prompt = build_prompt(task)
+        # Template chosen per task shape (function-completion vs whole-program):
+        # the id comes back with the prompt so the record always names the
+        # template that actually produced it.
+        final_prompt, prompt_template_id = build_prompt_for_task(task)
         sample_seed = seed + sample_idx
         out = model.generate(
             final_prompt,
@@ -118,7 +121,7 @@ def make_qwen_generate_fn(
             model_revision=getattr(model, "model_revision", None),
             enable_thinking=enable_thinking,
             final_prompt=final_prompt,
-            prompt_template_id=PROMPT_TEMPLATE_ID,
+            prompt_template_id=prompt_template_id,
         )
 
     return generate_fn

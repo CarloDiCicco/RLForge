@@ -362,11 +362,18 @@ def _is_stdio_row(problem: dict) -> bool:
     Routes on the decoded test cases' `testtype`, not the platform string:
     LeetCode rows carry testtype "functional", AtCoder/Codeforces carry "stdin"
     (verified against real data). Reading testtype means a new stdin/stdout
-    platform is picked up automatically. Only public_test_cases is inspected —
-    it is always plain JSON and shares the row's testtype, so this avoids the
-    heavier base64/zlib/pickle decode of private cases just to classify.
+    platform is picked up automatically.
+
+    public_test_cases is checked first (always plain JSON, cheap), but a row with
+    NO public cases must fall through to private_test_cases rather than be
+    classified as non-stdio: release_v6's `abc350_c` is exactly that shape —
+    empty public, 3 valid private stdin cases — and inspecting only the public
+    field silently dropped it (found by reconciling our 1054 converted tasks
+    against the dataset's documented 1055 rows).
     """
     cases = _decode_test_cases(problem.get("public_test_cases", ""))
+    if not cases:
+        cases = _decode_test_cases(problem.get("private_test_cases", ""))
     return any(c.get("testtype") == "stdin" for c in cases)
 
 

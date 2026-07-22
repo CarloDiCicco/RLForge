@@ -46,14 +46,32 @@ PROMPT_TEMPLATE_ID = "generic_instruct_v1"
 def build_prompt(task: CodeTask) -> str:
     """Wrap task.prompt in a generic instruction for an instruct-tuned model.
 
-    task.prompt is included verbatim, untouched, inside a ```python fence —
-    only the surrounding instruction is added. Matches extract_code()'s
-    "prefer the first ```python fence" priority, so the two ends of the
-    pipeline agree on the expected format.
+    task.prompt is included verbatim, untouched — only the surrounding
+    instruction is added. Matches extract_code()'s "prefer the first ```python
+    fence" priority, so the two ends of the pipeline agree on the expected
+    format.
+
+    Fencing is conditional, because adapters differ in what they store:
+
+      - HumanEval+ stores a BARE function stub (pure code, no fence), so the
+        stub is wrapped in a ```python fence here — that is what cues the model
+        to answer in the same format.
+      - The LiveCodeBench-LeetCode adapter stores a prose statement that ALREADY
+        ends with its own ```python-fenced starter stub. Wrapping that again
+        produced a malformed prompt: the English statement sat inside a ```python
+        fence and the prompt ended with a doubled ``` (three fences, unbalanced;
+        found by reading `final_prompt` back out of a run's generations.jsonl).
+        Such a prompt is passed through as-is.
+
+    Detecting the fence rather than adding an adapter flag keeps this a property
+    of the prompt itself, so any future adapter storing pre-fenced text is
+    handled without another switch.
     """
+    prompt = task.prompt.rstrip()
+    body = prompt if "```" in prompt else f"```python\n{prompt}\n```"
     return (
         "Complete the following Python function. "
         "Return only one Markdown fenced Python block (```python ... ```), "
         "with no extra explanation.\n\n"
-        f"```python\n{task.prompt.rstrip()}\n```"
+        f"{body}"
     )
