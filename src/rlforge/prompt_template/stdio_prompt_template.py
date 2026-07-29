@@ -56,7 +56,13 @@ def build_stdio_prompt(task: CodeTask) -> str:
     return (
         "Write a complete Python program that solves the following problem. "
         "The program must read its input from standard input and write its "
-        "answer to standard output. "
+        "answer to standard output "
+        # Guard taken VERBATIM from LiveCodeBench's official template (their
+        # exact parenthetical, unreworded on purpose — it is the string the LCB
+        # ecosystem runs with). It stops models from hardcoding the statement's
+        # sample answers or embedding self-test scaffolding against them,
+        # instead of writing a general algorithm that reads stdin.
+        "(do not directly test on the sample inputs). "
         "Return only one Markdown fenced Python block (```python ... ```), "
         "with no extra explanation.\n\n"
         f"{task.prompt.rstrip()}"

@@ -90,6 +90,15 @@ def test_stdio_prompt_does_not_fence_the_prose_statement():
     assert built.index("```python") < built.index("Given two integers")
 
 
+def test_stdio_prompt_carries_the_official_sample_inputs_guard():
+    """The guard is LiveCodeBench's exact parenthetical, adopted verbatim: it
+    stops models hardcoding the statement's sample answers instead of writing a
+    general stdin-reading algorithm. Pinned verbatim so a rewording (which would
+    silently deviate from the official string) fails this test."""
+    built = build_stdio_prompt(_stdio_task())
+    assert "(do not directly test on the sample inputs)" in built
+
+
 def test_stdio_prompt_requests_single_fenced_python_block():
     built = build_stdio_prompt(_stdio_task())
     assert "Return only one Markdown fenced Python block" in built

@@ -28,6 +28,7 @@ def _run(tmp_path):
         sandbox_config=SandboxConfig(backend="subprocess"),
         n_samples=1,
         ks=(1,),
+        tasks_source="tests/fixtures/tasks_smoke.jsonl",
     )
     metrics = run_pipeline(tasks, config=config)
     # run_id is the only entry under out_dir.
@@ -93,3 +94,7 @@ def test_summary_reloads_with_run_provenance(tmp_path):
     assert summary["pass_at_1"] == 1.0
     assert summary["model_name"] == "stub:echo-reference"
     assert "git_commit" in summary and "hardware_info" in summary
+    # The run-level summary must name what the tasks were loaded from: with
+    # several benchmarks coexisting (LeetCode vs stdin/stdout), a summary line
+    # without the source is ambiguous exactly when it matters.
+    assert summary["tasks_source"] == "tests/fixtures/tasks_smoke.jsonl"

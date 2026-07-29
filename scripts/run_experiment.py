@@ -56,6 +56,9 @@ def main(config_path: str) -> None:
         enable_thinking=config.generation.enable_thinking,
     )
 
+    # Stamp where the tasks came from into the run summary — exactly one of
+    # tasks_file / dataset is set (enforced by ExperimentConfig's validator).
+    config.run.tasks_source = config.tasks_file or config.dataset
     run_pipeline(tasks, generate_fn=gen_fn, config=config.run)
 
 

@@ -138,6 +138,12 @@ class RunConfig(BaseModel):
     sandbox_config: SandboxConfig = Field(default_factory=lambda: SandboxConfig(backend="bwrap"))
     n_samples: int = 1
     ks: tuple[int, ...] = (1,)
+    # What the tasks were loaded from (a data file path, or an adapter/dataset
+    # name). Stamped into summary.jsonl: per-generation records carry
+    # dataset_source, but the run-level summary previously named no task source
+    # at all — once several benchmarks coexist (LeetCode vs stdin/stdout), a
+    # summary line without it is ambiguous exactly when it matters.
+    tasks_source: str | None = None
     # Which named suite is the pass/fail authority for metrics (never "visible":
     # the model may have seen those tests, so they cannot be the grading truth).
     grading_role: str = "hidden"
@@ -296,6 +302,7 @@ def run_pipeline(
         metrics,
         extra={
             "model_name": last_model_name,
+            "tasks_source": config.tasks_source,
             "git_commit": git_commit(),
             "hardware_info": hardware_info(),
             "sandbox_config_id": config.sandbox_config.sandbox_config_id,
@@ -329,5 +336,6 @@ if __name__ == "__main__":
             # (but gitignored-contents) folder in the repo, not on ~/data.
             out_dir="runs",
             sandbox_config=_default_sandbox_config(),
+            tasks_source=sys.argv[1],
         ),
     )
