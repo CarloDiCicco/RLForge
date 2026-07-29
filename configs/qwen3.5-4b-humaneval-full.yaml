@@ -20,7 +20,14 @@ dataset: humaneval_plus
 # max_tasks omitted: run all 164 tasks.
 
 generation:
-  max_new_tokens: 1024
+  # 2048, raised from 1024 so all three baselines share one identical budget.
+  # At 1024, HumanEval/132 and HumanEval/134 hit the cap mid-output and
+  # auto-failed as unparseable (2/164 — small, but the same defect that cost
+  # LeetCode 32% of its run; see RESEARCH_LOG 2026-07-17). Matches
+  # LiveCodeBench's runner default (max_tokens=2000). Non-truncated answers
+  # here measured median 181 / p99 952 tokens, so 2048 is headroom, not licence
+  # for endless repetition.
+  max_new_tokens: 2048
   do_sample: true
   temperature: 0.7
   top_p: 0.8
@@ -35,3 +42,21 @@ run:
   n_samples: 1
   ks: [1]
   grading_role: hidden
+  sandbox_config:
+    # Stated explicitly so all three baselines are identical on paper, not just
+    # in effect: the first run of this config had no sandbox_config block and
+    # resolved to bwrap anyway via pipeline._default_sandbox_config(), which is
+    # what its record shows (sandbox_config_id=bwrap-5e6480c5).
+    backend: bwrap
+    # HumanEval+ tasks are small (measured: 0.070s mean, 0.085s max execution,
+    # zero timeouts at the old default), so this budget is never the binding
+    # constraint here. Matched to the LCB configs for uniformity.
+    timeout_s: 60.0
+    cpu_s: 60
+    # Same 8192 MB ceiling as the two LiveCodeBench configs, so all three
+    # baselines are identical on every sandbox knob and differ only in dataset.
+    # It is NOT load-bearing here: HumanEval+ test suites are tiny (median 345,
+    # max 1,512 chars, vs LeetCode's 36.7 MB worst case) and the 2026-07-23 run
+    # recorded 0 MemoryErrors at the old 512 MB default. Raising a ceiling that
+    # was never approached cannot change the result — pass@1 = 0.805 stands.
+    mem_mb: 8192

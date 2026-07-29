@@ -1,0 +1,59 @@
+# Baseline #3: Qwen3.5-4B (instruct, non-thinking mode, zero-shot) against the
+# FULL LiveCodeBench stdin/stdout set (611 tasks: AtCoder + Codeforces, graded
+# by the stdin_stdout harness — verify/compiler.py). Third citable baseline,
+# the whole-program companion to the LeetCode run
+# (qwen3.5-4b-livecodebench-full.yaml). See RESEARCH_LOG.md for the dataset
+# audit (611 tasks reconciled against the release_v6 total) and the
+# stdio_instruct_v1 prompt template (selected automatically per suite kind).
+#
+# Sampling settings (generation:) are IDENTICAL to the HumanEval+ and LeetCode
+# baselines so the three numbers are comparable — Qwen3.5's official
+# model-card values for INSTRUCT (non-thinking) mode. max_new_tokens follows
+# the same 2048 decision as the LeetCode config (see its comment).
+#
+# TIMEOUT: same reasoning as the LeetCode config — the whole task (all ~25 IO
+# pairs, each re-executing the candidate program) runs in one process under one
+# timeout, so the budget must cover every pair sequentially. 60s wall + 60s CPU.
+#
+# Usage:
+#   python scripts/run_experiment.py configs/qwen3.5-4b-livecodebench-stdio-full.yaml
+
+experiment_id: qwen3.5-4b-livecodebench-stdio-full
+seed: 0
+model_id: Qwen/Qwen3.5-4B
+tasks_file: data/livecodebench_stdin_stdout.jsonl
+# max_tasks omitted: run all 611 tasks.
+
+generation:
+  max_new_tokens: 2048
+  do_sample: true
+  temperature: 0.7
+  top_p: 0.8
+  top_k: 20
+  min_p: 0.0
+  repetition_penalty: 1.0
+  presence_penalty: 1.5
+  enable_thinking: false
+
+run:
+  out_dir: runs
+  n_samples: 1
+  ks: [1]
+  grading_role: hidden
+  sandbox_config:
+    backend: bwrap
+    timeout_s: 60.0
+    # CPU cap equal to wall clock, same reasoning as the LeetCode config: ~25
+    # IO pairs run sequentially in one process; the 10s default CPU limit would
+    # kill slow-but-legitimate solutions long before the 60s wall budget.
+    cpu_s: 60
+    # Same 8192 MB ceiling as the LeetCode config, deliberately one uniform
+    # value. stdin/stdout payloads are far LARGER than LeetCode's (164/611 tasks
+    # exceed 10 MB; worst is LCB/abc369_g at 188.9 MB across 27 pairs, a 208 MB
+    # assembled script) but far CHEAPER to load: the pairs are embedded as one
+    # JSON string parsed into plain strs at runtime, roughly linear in size,
+    # rather than compiled Python literals. Measured: that worst task dies with
+    # MemoryError at 512/1024/1536 MB and first reaches the tests at 2048 MB.
+    # 8192 is kept anyway so both LCB configs differ only in the dataset, and to
+    # leave headroom above today's worst case. A ceiling, not an allocation.
+    mem_mb: 8192

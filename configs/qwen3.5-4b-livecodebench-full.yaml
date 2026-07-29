@@ -26,7 +26,13 @@ tasks_file: data/livecodebench_leetcode.jsonl
 # max_tasks omitted: run all 444 tasks.
 
 generation:
-  max_new_tokens: 1024
+  # 2048, not the 1024 the first attempt of this baseline ran with: 144/444 of
+  # those generations (32%) hit the 1024 cap mid-code and auto-failed as
+  # truncation, not ability (RESEARCH_LOG 2026-07-17). Matches LiveCodeBench's
+  # own runner default (max_tokens=2000). Non-truncated solutions measured
+  # median 197 / p99 943 output tokens, so 2048 covers the tail without leaving
+  # room for endless repetition.
+  max_new_tokens: 2048
   do_sample: true
   temperature: 0.7
   top_p: 0.8
@@ -49,3 +55,14 @@ run:
     # need the full 60s budget. Left at the 10s default, the CPU limit would kill
     # slow-but-legitimate solutions long before the advertised 60s wall budget.
     cpu_s: 60
+    # Raised from the 512 MB default: some tasks inline enormous test data (worst
+    # is LCB/3495 at 36.7 MB of assert literals). Python must PARSE and COMPILE
+    # that source before the candidate runs, and compiled literals cost ~100-200x
+    # the source size in AST nodes and int/list objects. At 512 MB those tasks
+    # died with a bare MemoryError in ~0.5s, before any solution code executed,
+    # and were scored as ordinary `runtime` failures — i.e. the harness failed
+    # them, not the model (~5% of executed tasks in the aborted 20260723T104453Z
+    # run). Measured empirically: LCB/3495 fails at 512/1024/2048/4096 MB and
+    # first compiles at 8192. This is a CEILING, not an allocation — normal tasks
+    # still use a few MB.
+    mem_mb: 8192
