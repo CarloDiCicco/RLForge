@@ -25,6 +25,11 @@ data = [
     # ~/.cache/huggingface/hub/, outside the repo, same convention as
     # evalplus's own ~/.cache/evalplus/ cache).
     "huggingface_hub>=0.20",
+    # adapters/taco.py — TACO ships its data as parquet shards under ALL/ and a
+    # custom loading script; we read the shards directly (streaming, since the
+    # inline test payloads are far too large to materialize at once) rather than
+    # going through datasets.load_dataset, same rationale as livecodebench.py.
+    "pyarrow>=14",
 ]
 model = [
     # Local model inference (models/qwen.py). Loaded natively in bf16, no
@@ -35,6 +40,27 @@ model = [
     "transformers>=4.40",
     "accelerate>=0.30",   # device_map="auto"
 ]
+train = [
+    # RL post-training (GRPO). TRL is the trainer; peft supplies LoRA so a 4B
+    # policy + reference + optimizer state fits alongside rollout generation on
+    # a single GB10. torch stays pinned to the same 2.12.1+cu130 build the
+    # baselines ran on — see the warning below about vllm.
+    "trl>=1.13",
+    "peft>=0.20",
+    # Training-curve logging. Chosen over wandb deliberately: runs happen on the
+    # DGX behind SSH, and tensorboard writes plain event files to the artifact
+    # dir (no account, no network egress, survives a dropped connection).
+    "tensorboard>=2.20",
+]
+
+# NOTE — do NOT add `vllm` to this project's environment without reading this.
+# `uv pip install vllm` resolves to vllm 0.29.0, which requires torch 2.13.0
+# from PyPI and would REPLACE the pinned torch==2.12.1+cu130 build that all
+# three baselines (RESEARCH_LOG 2026-07-23/24) were produced on. Swapping the
+# torch build under the baselines makes their numbers non-reproducible in this
+# venv, which is exactly the comparison the RL results depend on. If vLLM-backed
+# rollouts are wanted later, put them in a SEPARATE venv (server mode over HTTP),
+# never in this one.
 
 # Source torch from PyTorch's CUDA 13.0 wheel index; without this uv would
 # resolve the default (CPU) wheel. Adjust to match the target CUDA toolkit.
@@ -51,3 +77,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    # Tests that hit the network (dataset downloads). Deselect with -m "not slow".
+    "slow: touches the network or is otherwise slow",
+]
