@@ -201,6 +201,11 @@ data/*
 !data/humaneval_plus.jsonl
 !data/livecodebench_leetcode.jsonl
 !data/livecodebench_stdin_stdout.jsonl
+# The RL train/eval splits: a few KB of task_ids, and they DEFINE the experiment.
+# Without them committed, "pass@1 on 100 held-out tasks" is not a reproducible
+# claim and nobody can verify the eval tasks were never trained on.
+!data/splits/
+!data/splits/*.json
 runs/*
 !runs/.gitkeep
 outputs/
