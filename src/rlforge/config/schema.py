@@ -67,6 +67,17 @@ class ExperimentConfig(BaseModel):
     experiment_id: str
     seed: int = Field(default=0, ge=0)
     model_id: str
+    # Exact HF commit to load, pinned. Optional for backward compatibility with
+    # the configs that produced the existing baselines, but it SHOULD be set:
+    # those runs recorded `model_revision: null` because Transformers no longer
+    # populates `config._commit_hash`, leaving "same model across runs" as an
+    # assumption. Pinning it here makes an upstream re-upload a load error
+    # rather than a silent confound between a baseline and an RL result.
+    model_revision: str | None = Field(default=None)
+    # PEFT/LoRA adapter to load on top of `model_id`. Set when evaluating an
+    # RL-trained policy: the adapter is scored through the SAME run_pipeline as
+    # the baselines, so the comparison does not depend on a second eval path.
+    adapter_path: str | None = Field(default=None)
 
     # Exactly one of these selects the task source — enforced below.
     tasks_file: str | None = Field(default=None)
@@ -75,6 +86,13 @@ class ExperimentConfig(BaseModel):
     # adapters.task_loader.load_tasks and adapters.humaneval.load_humaneval_plus
     # already accept `limit` with this exact meaning).
     max_tasks: int | None = Field(default=None, ge=1)
+    # Restrict the run to the task_ids listed in this JSON file (a list of
+    # strings, as written by scripts/make_rl_split.py). Needed to evaluate an
+    # RL-trained policy honestly: the held-out eval set is a SUBSET of the same
+    # tasks_file the policy trained from, so without this the run would score the
+    # model on tasks it was trained on and the headline number would be
+    # train-set performance. Applied before `max_tasks`.
+    task_ids_file: str | None = Field(default=None)
 
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     # The EXISTING pipeline.RunConfig, reused as-is (out_dir, sandbox_config,

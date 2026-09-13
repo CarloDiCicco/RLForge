@@ -13,7 +13,9 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import sys
+from pathlib import Path
 
 from rlforge.adapters.humaneval import load_humaneval_plus
 from rlforge.adapters.task_loader import load_tasks
@@ -31,8 +33,28 @@ def _load_tasks(config: ExperimentConfig) -> list[CodeTask]:
     of these is set.
     """
     if config.dataset == "humaneval_plus":
-        return load_humaneval_plus(limit=config.max_tasks)
-    return load_tasks(config.tasks_file, limit=config.max_tasks)
+        tasks = load_humaneval_plus(limit=config.max_tasks)
+    elif config.task_ids_file is None:
+        tasks = load_tasks(config.tasks_file, limit=config.max_tasks)
+    else:
+        # Filter to an explicit task_id list (e.g. the 100 held-out RL eval
+        # tasks). `limit` is applied AFTER filtering, not by the loader, or a cap
+        # would truncate the source file before the wanted ids were reached.
+        wanted = json.loads(Path(config.task_ids_file).read_text())
+        by_id = {t.task_id: t for t in load_tasks(config.tasks_file)}
+        missing = [t for t in wanted if t not in by_id]
+        if missing:
+            raise ValueError(
+                f"{len(missing)} task_id(s) from {config.task_ids_file} are not in "
+                f"{config.tasks_file} (first few: {missing[:5]})"
+            )
+        # Preserve the id file's order so runs over the same split are aligned.
+        tasks = [by_id[t] for t in wanted]
+        if config.max_tasks is not None:
+            tasks = tasks[: config.max_tasks]
+        print(f"[run_experiment] restricted to {len(tasks)} tasks from {config.task_ids_file}")
+
+    return tasks
 
 
 def main(config_path: str) -> None:
@@ -41,7 +63,11 @@ def main(config_path: str) -> None:
     tasks = _load_tasks(config)
     print(f"[run_experiment] {len(tasks)} tasks loaded; loading {config.model_id}...")
 
-    model = QwenModel(config.model_id)
+    model = QwenModel(
+        config.model_id,
+        revision=config.model_revision,
+        adapter_path=config.adapter_path,
+    )
     gen_fn = make_qwen_generate_fn(
         model,
         max_new_tokens=config.generation.max_new_tokens,

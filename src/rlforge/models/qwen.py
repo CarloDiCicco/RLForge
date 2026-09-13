@@ -76,20 +76,57 @@ class QwenGenerationOutput(NamedTuple):
 class QwenModel:
     """Local Qwen inference wrapper: loads once, generates many times."""
 
-    def __init__(self, model_id: str) -> None:
+    def __init__(
+        self,
+        model_id: str,
+        *,
+        revision: str | None = None,
+        adapter_path: str | None = None,
+    ) -> None:
+        """Load a Qwen model, optionally pinned to an exact revision.
+
+        `revision` pins the HF repo to one commit. This is not cosmetic: the
+        three baselines in RESEARCH_LOG all recorded `model_revision: null`
+        (Transformers stopped populating `config._commit_hash`), so "the same
+        model" was an assumption rather than a recorded fact. Passing the
+        snapshot hash explicitly makes it one, and makes a silent upstream
+        re-upload of the repo a load error instead of a quiet confound.
+
+        `adapter_path` loads a PEFT/LoRA adapter on top of the base weights —
+        how an RL-trained policy is evaluated through the same, already
+        validated `run_pipeline` as the baselines, rather than a second eval
+        path that would have to be trusted separately.
+        """
         self.model_id = model_id
-        self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_id, revision=revision, trust_remote_code=True
+        )
         self.model = AutoModelForCausalLM.from_pretrained(
             model_id,
+            revision=revision,
             device_map="auto",
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
         )
+        # The resolved HF commit hash for this model repo — guards against the
+        # repo being silently re-uploaded upstream after this run. Prefer the
+        # explicitly requested revision (authoritative: it is what we asked to
+        # load) and fall back to whatever the config reports.
+        self.model_revision: str | None = revision or getattr(
+            self.model.config, "_commit_hash", None
+        )
+
+        # Adapter is applied AFTER the revision is recorded, so the record names
+        # the base model it was trained against.
+        self.adapter_path = adapter_path
+        if adapter_path is not None:
+            from peft import PeftModel
+
+            self.model = PeftModel.from_pretrained(self.model, adapter_path)
+
         # eval() disables dropout — required for deterministic greedy decoding.
+        # Applied last so it covers the adapter layers too.
         self.model.eval()
-        # The actual resolved HF commit hash for this model repo — guards
-        # against the repo being silently re-uploaded upstream after this run.
-        self.model_revision: str | None = getattr(self.model.config, "_commit_hash", None)
 
     def generate(
         self,
