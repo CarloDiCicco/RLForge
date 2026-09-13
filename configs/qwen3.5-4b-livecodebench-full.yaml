@@ -22,6 +22,13 @@
 experiment_id: qwen3.5-4b-livecodebench-full
 seed: 0
 model_id: Qwen/Qwen3.5-4B
+# Exact HF snapshot, pinned. The runs that produced the baselines recorded
+# `model_revision: null` (Transformers no longer populates config._commit_hash),
+# so "the same model" was an assumption; this is the hash those runs actually
+# resolved to, read back from the local HF cache. Pinning makes a silent
+# upstream re-upload a load error instead of an invisible confound when a
+# baseline is compared against an RL result.
+model_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
 tasks_file: data/livecodebench_leetcode.jsonl
 # max_tasks omitted: run all 444 tasks.
 

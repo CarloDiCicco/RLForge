@@ -1,0 +1,45 @@
+# BASELINE on the same 100 held-out tasks — the correct comparison point for the
+# RL run. Byte-for-byte identical to qwen3.5-4b-lcb-leetcode-eval100-rl.yaml
+# except that no adapter is loaded.
+#
+# Why this run is necessary and cannot be skipped. The published LeetCode baseline
+# is pass@1 = 0.401 over ALL 444 tasks. The RL policy is evaluated on 100 held-out
+# tasks whose difficulty mix matches the population but whose pass rate will
+# differ from 0.401 by ordinary sampling variation. Comparing "adapter on 100
+# tasks" against "base model on 444 tasks" would attribute that difference to RL.
+# So the base model is re-scored on exactly these 100 tasks, with the same seed
+# and sampling, and THAT is the number the RL result is measured against.
+#
+# Usage:
+#   python scripts/run_experiment.py configs/qwen3.5-4b-lcb-leetcode-eval100-base.yaml
+
+experiment_id: qwen3.5-4b-lcb-leetcode-eval100-base
+seed: 0
+model_id: Qwen/Qwen3.5-4B
+model_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+# adapter_path deliberately omitted — this is the un-trained base policy.
+
+tasks_file: data/livecodebench_leetcode.jsonl
+task_ids_file: data/splits/lcb_leetcode_eval.json
+
+generation:
+  max_new_tokens: 2048
+  do_sample: true
+  temperature: 0.7
+  top_p: 0.8
+  top_k: 20
+  min_p: 0.0
+  repetition_penalty: 1.0
+  presence_penalty: 1.5
+  enable_thinking: false
+
+run:
+  out_dir: /home/carlo/data/projects/RLForge/runs/eval/qwen3.5-4b-lcb-leetcode-eval100-base
+  n_samples: 1
+  ks: [1]
+  grading_role: hidden
+  sandbox_config:
+    backend: bwrap
+    timeout_s: 60.0
+    cpu_s: 60
+    mem_mb: 8192

@@ -1,0 +1,128 @@
+# RL RUN #1: GRPO on Qwen3.5-4B, LiveCodeBench-LeetCode, verifier reward.
+#
+# The project's first online-RL experiment. Identical to
+# grpo-lcb-leetcode-smoke.yaml except for max_steps and the task count — run the
+# smoke config first and clear its gates before launching this.
+#
+# Why this benchmark. Of the three baselines, LeetCode is the only sensible RL
+# target: HumanEval+ is already at 0.805 (no headroom) and LCB-stdio truncates
+# 39.8% of generations at 2048 tokens (training would largely be against the
+# token cap). LeetCode sits at 0.401 with 21.6% truncation.
+#
+# What is expected to move, and the honesty condition. LeetCode scores 0.401
+# overall but 0.511 on NON-TRUNCATED generations, so ~11 points of the baseline
+# is the model exhausting its budget on commentary rather than getting algorithms
+# wrong. A pass@1 gain here could therefore mean "codes better" or merely
+# "rambles less" — reward/extraction_failure_rate must be reported alongside
+# pass@1 for the result to mean anything.
+#
+# Runtime: ~42 s/step measured (≈31 s generation at batch 8 + ~3.4 s threaded
+# reward + backward), so ~200 steps ≈ 2.3 h. Run under tmux.
+#
+# Usage:
+#   tmux new -s grpo
+#   python scripts/train_grpo.py configs/grpo-lcb-leetcode-full.yaml
+#   tensorboard --logdir ~/data/projects/RLForge/runs/train/grpo-lcb-leetcode-full
+#
+# Evaluate with configs/qwen3.5-4b-lcb-leetcode-eval100.yaml (adapter) and its
+# no-adapter twin — the baseline 0.401 is over all 444 tasks, NOT over the 100
+# held-out ones, so the comparison must be recomputed on the same 100.
+
+experiment_id: grpo-lcb-leetcode-full
+seed: 0
+model_id: Qwen/Qwen3.5-4B
+# Same pinned snapshot as the baselines — an RL delta measured against a baseline
+# on a different model snapshot would be uninterpretable.
+model_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+
+tasks_file: data/livecodebench_leetcode.jsonl
+# 344 train / 100 eval, stratified by difficulty, seed 0 (data/splits/, committed:
+# the split defines the experiment). The 100 eval tasks are NEVER trained on.
+train_split: data/splits/lcb_leetcode_train.json
+eval_split: data/splits/lcb_leetcode_eval.json
+# max_train_tasks omitted: use all 344 training tasks.
+
+out_dir: /home/carlo/data/projects/RLForge/runs/train/grpo-lcb-leetcode-full
+
+lora:
+  r: 32
+  lora_alpha: 64
+  lora_dropout: 0.0
+
+grpo:
+  # Rollout sampling = TRL defaults, deliberately NOT the benchmark's
+  # 0.7/0.8/20. GRPO learns from the spread of rewards within a group; at low
+  # temperature rollouts collapse toward one answer, advantages go to zero and
+  # the step teaches nothing. Evaluation uses the frozen baseline values so the
+  # reported number stays comparable to the three baselines.
+  temperature: 1.0
+  top_p: 1.0
+  top_k: 0
+  # Same budget as the baselines → rollout truncation is directly comparable to
+  # the 21.6% measured there.
+  max_completion_length: 2048
+  # 8, not 4: at ~0.40 pass rate, 4 rollouts give an all-fail (or all-pass) group
+  # — hence zero advantage and a wasted step — for ~13% of prompts; at 8 that is
+  # ~1.7%. Measured throughput also peaks at batch 8-16, so the extra rollouts
+  # are nearly free.
+  num_generations: 8
+  # 0.0 = no KL term and no reference model (TRL's default; current DAPO
+  # practice). Saves a forward pass per step and removes a hyperparameter from
+  # the first experiment. Accepted risk: no anchor against policy drift — the
+  # HumanEval+ transfer eval is the detector. If it degrades, rerun at 0.001
+  # (DeepSeek-R1's value).
+  beta: 0.0
+  # A truncated rollout is unfinished, not wrong; training on it as a negative
+  # punishes a possibly-correct approach. Matters here: 21.6% truncation.
+  mask_truncated_completions: true
+  learning_rate: 1.0e-6
+  # HOW MANY TASKS INFORM ONE WEIGHT UPDATE. The first configuration used 1, which
+  # made every step hostage to whichever single task was drawn — the RL analogue of
+  # pretraining on one document at a time. 8 cuts that gradient noise ~8x.
+  # Advantages are still computed WITHIN each task's own 8 rollouts (GRPO's
+  # mechanism); this only sets how many such groups are averaged before stepping.
+  tasks_per_update: 8
+  # MEASURED (2026-09-12): the ONLY knob that drives the memory spike. At 8 the run
+  # OOMed claiming 117.5 of 121.7 GB, because Qwen3.5-4B's 248,320-token vocabulary
+  # makes the loss logits ~1 GB per 2048-token sequence in bf16. At 2 the measured
+  # peak was 22.9 GB. Raising tasks_per_update above costs TIME, not memory.
+  per_device_train_batch_size: 2
+  # gradient_accumulation_steps is DERIVED (tasks_per_update * num_generations /
+  # per_device_train_batch_size = 8*8/2 = 32) and validated in grpo_config.py, so
+  # the three numbers cannot silently disagree.
+  # Rollouts run under no_grad, but 16 concurrent 2048-token sequences hold a KV
+  # cache that is still resident when the loss runs, raising the floor the
+  # backward pass must fit above. 8 keeps most of the batching win (108 vs 145
+  # tok/s measured) for a noticeably lower peak.
+  generation_batch_size: 8
+  # ON. Turned off once on the strength of a 22.9 GB peak — but that peak was
+  # measured when an update held only 8 rollouts. At 64 (8 tasks x 8) the
+  # backward pass over 32 layers of stored activations OOMed at ~105 GB, the
+  # traceback landing in `backward`. ~30% step time is cheap against losing a
+  # 10-hour run.
+  gradient_checkpointing: true
+  # Hard VRAM ceiling. The GB10 shares one memory pool between CPU and GPU, so a
+  # run claiming ~105 of 121.7 GB starved the OS and locked the whole host on
+  # 2026-09-13. Capped, the same overrun kills only this job.
+  max_memory_fraction: 0.75
+  max_steps: 25
+  logging_steps: 1
+  save_steps: 5
+
+reward:
+  correctness_weight: 1.0
+  # Run #1 is correctness-only. The brevity term is implemented and tested but
+  # OFF, so run #2 flips exactly one number — a clean one-variable ablation
+  # rather than a mid-study code change.
+  length_weight: 0.0
+  max_workers: 8
+
+# IDENTICAL to the three baseline configs, so the reward is the same predicate as
+# the benchmark's pass/fail. mem_mb 8192 especially: at the 512 MB default, tasks
+# with large inlined test data were killed during test COMPILATION and scored as
+# model failures (RESEARCH_LOG 2026-07-23).
+sandbox_config:
+  backend: bwrap
+  timeout_s: 60.0
+  cpu_s: 60
+  mem_mb: 8192
