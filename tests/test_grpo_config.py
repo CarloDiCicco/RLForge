@@ -250,3 +250,31 @@ def test_split_difficulty_is_stratified():
     for difficulty, count in pop.items():
         expected = 100 * count / stats["n_tasks"]
         assert abs(ev.get(difficulty, 0) - expected) <= 1.0, difficulty
+
+
+# ── chat formatting (the run12 bug) ───────────────────────────────────────────
+
+
+def test_thinking_defaults_off_like_the_baselines():
+    cfg = GRPOExperimentConfig.model_validate(_minimal())
+    assert cfg.enable_thinking is False
+
+
+def test_training_prompts_are_chat_formatted():
+    """Plain-string prompts make TRL skip the chat template (run12's bug).
+
+    The prompt must be a message list so TRL applies the template with
+    chat_template_kwargs, matching the eval pipeline's input exactly.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "train_grpo", _REPO / "scripts" / "train_grpo.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    cfg = load_grpo_config(_CONFIGS / "grpo-lcb-leetcode-smoke.yaml")
+    dataset, _ = module.build_dataset(cfg)
+    prompt = dataset[0]["prompt"]
+    assert isinstance(prompt, list), "plain string => TRL skips the chat template"
+    assert prompt == [{"role": "user", "content": prompt[0]["content"]}]

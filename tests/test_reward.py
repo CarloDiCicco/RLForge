@@ -463,3 +463,13 @@ def test_reward_reproduces_recorded_baseline_labels():
         (t, e, g) for t, e, g in zip(sample, expected, got) if e != g
     ]
     assert not mismatches, f"reward disagrees with recorded labels on: {mismatches}"
+
+
+def test_chat_format_completions_are_graded_like_strings():
+    """TRL passes message lists for chat datasets; the reward must not care."""
+    from rlforge.train.reward import _completion_text
+
+    text = "```python\nprint(1)\n```"
+    assert _completion_text(text) == text
+    assert _completion_text([{"role": "assistant", "content": text}]) == text
+    assert _completion_text(None) == ""

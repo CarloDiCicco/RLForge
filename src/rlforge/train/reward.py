@@ -58,6 +58,18 @@ from rlforge.schema.task import CodeTask
 from rlforge.verify.compiler import suite_to_test_code
 
 
+def _completion_text(completion: object) -> str:
+    """Text of one completion, whether TRL passed a string or a message list."""
+    if isinstance(completion, str):
+        return completion
+    if isinstance(completion, list):
+        return "".join(
+            m.get("content", "") for m in completion
+            if isinstance(m, dict) and isinstance(m.get("content"), str)
+        )
+    return ""
+
+
 class VerifierReward:
     """Score completions by executing them against their hidden test suite.
 
@@ -148,7 +160,10 @@ class VerifierReward:
         a completion that cannot be graded scores 0.0 (the same outcome the
         benchmark harness gives an unusable generation) rather than propagating.
         """
-        completions = completions or []
+        # Chat-format datasets make TRL pass each completion as a message list
+        # ([{"role": "assistant", "content": "..."}]) instead of a string. Grade
+        # the assistant text either way, so the reward is format-independent.
+        completions = [_completion_text(c) for c in (completions or [])]
         task_ids = kwargs.get("task_id")
         if not isinstance(task_ids, list) or len(task_ids) != len(completions):
             raise ValueError(

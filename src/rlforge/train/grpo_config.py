@@ -202,6 +202,12 @@ class GRPOExperimentConfig(BaseModel):
     # null revision, so "same base model" was an assumption. An RL delta measured
     # against a baseline on a silently different snapshot would be meaningless.
     model_revision: str | None = Field(default=None)
+    # Qwen3.5 thinking mode, passed to the chat template exactly as the eval
+    # pipeline does (models/qwen.py). False = the baselines' non-thinking mode.
+    # Prompts are always chat-formatted: before 2026-09-26 they were plain
+    # strings, TRL skipped the chat template for them, and run12 trained on raw
+    # text the baselines never used (RESEARCH_LOG 2026-09-26).
+    enable_thinking: bool = Field(default=False)
 
     tasks_file: str
     # Path to the committed split (data/splits/*.json). Required, not optional:

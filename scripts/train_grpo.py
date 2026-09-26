@@ -173,11 +173,17 @@ def build_dataset(cfg: GRPOExperimentConfig) -> tuple[Dataset, dict]:
     for task_id in train_ids:
         prompt, template_id = build_prompt_for_task(tasks[task_id])
         template_ids.add(template_id)
-        rows.append({"prompt": prompt, "task_id": task_id})
+        # Chat format (a message list), NOT a plain string. For plain strings TRL
+        # skips the chat template and the model sees raw text, which is what run12
+        # did by mistake. As messages, TRL applies the template with
+        # chat_template_kwargs, so the input matches the eval pipeline
+        # (models/qwen.py: one user message, generation prompt, enable_thinking).
+        rows.append({"prompt": [{"role": "user", "content": prompt}], "task_id": task_id})
 
     # The prompt is part of the experiment: a run that silently used a different
     # template than the baseline would not be comparable to it.
     print(f"[train_grpo] prompt templates in use: {sorted(template_ids)}")
+    print(f"[train_grpo] chat template applied, enable_thinking={cfg.enable_thinking}")
     if len(template_ids) != 1:
         raise ValueError(
             f"expected exactly one prompt template for this benchmark, got {template_ids}"
@@ -270,6 +276,8 @@ def _train(cfg, run_dir: Path) -> None:
         top_p=cfg.grpo.top_p,
         top_k=cfg.grpo.top_k,
         max_completion_length=cfg.grpo.max_completion_length,
+        # Same thinking switch the eval pipeline passes to apply_chat_template.
+        chat_template_kwargs={"enable_thinking": cfg.enable_thinking},
         num_generations=cfg.grpo.num_generations,
         # objective
         beta=cfg.grpo.beta,
