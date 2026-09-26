@@ -286,6 +286,8 @@ def _train(cfg, run_dir: Path) -> None:
         mask_truncated_completions=cfg.grpo.mask_truncated_completions,
         # optimization
         learning_rate=cfg.grpo.learning_rate,
+        lr_scheduler_type=cfg.grpo.lr_scheduler_type,
+        warmup_steps=cfg.grpo.warmup_steps,
         per_device_train_batch_size=cfg.grpo.per_device_train_batch_size,
         gradient_accumulation_steps=cfg.grpo.gradient_accumulation_steps,
         # Rollout generation batched independently of the (small) training

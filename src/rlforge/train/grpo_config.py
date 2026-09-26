@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
@@ -104,7 +105,17 @@ class GRPOBlock(BaseModel):
     mask_truncated_completions: bool = Field(default=True)
 
     # ── optimization ──────────────────────────────────────────────────────────
+    # The default 1e-6 is TRL's, tuned for FULL fine-tuning. With LoRA it moved
+    # run12's weights by ~0.003% (Adam moves each weight ~LR per step, and LoRA B
+    # starts at 0, so |B| ~ steps x LR). Set it explicitly per run.
     learning_rate: float = Field(default=1e-6, gt=0.0)
+    # LR schedule. Default "linear" = HF's default, which decays the LR to 0 over
+    # max_steps; on a 12-step run that halves the average LR. Exposed so a run can
+    # choose "constant", "constant_with_warmup", "cosine", ... explicitly.
+    lr_scheduler_type: Literal[
+        "linear", "constant", "constant_with_warmup", "cosine"
+    ] = Field(default="linear")
+    warmup_steps: int = Field(default=0, ge=0)
     # MEASURED CONSTRAINT (wiring check, 2026-09-12): this is the knob that OOMs,
     # and it must stay small. Qwen3.5-4B has a 248,320-token vocabulary, so the
     # logits tensor the GRPO loss materializes is ~1 GB per sequence at 2048

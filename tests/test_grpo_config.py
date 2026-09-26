@@ -278,3 +278,16 @@ def test_training_prompts_are_chat_formatted():
     prompt = dataset[0]["prompt"]
     assert isinstance(prompt, list), "plain string => TRL skips the chat template"
     assert prompt == [{"role": "user", "content": prompt[0]["content"]}]
+
+
+def test_run13_differs_from_run12_only_in_lr():
+    """Run13 is run12 with the LR fixed. Any other change would confound them."""
+    r12 = load_grpo_config(_CONFIGS / "grpo-lcb-leetcode-run12.yaml")
+    r13 = load_grpo_config(_CONFIGS / "grpo-lcb-leetcode-run13.yaml")
+    lr_knobs = {"learning_rate", "lr_scheduler_type", "warmup_steps"}
+    assert r12.grpo.model_dump(exclude=lr_knobs) == r13.grpo.model_dump(exclude=lr_knobs)
+    for block in ("lora", "reward", "sandbox_config"):
+        assert getattr(r12, block) == getattr(r13, block), block
+    assert (r12.max_train_tasks, r12.train_split, r12.model_revision, r12.enable_thinking) == \
+        (r13.max_train_tasks, r13.train_split, r13.model_revision, r13.enable_thinking)
+    assert (r13.grpo.learning_rate, r13.grpo.lr_scheduler_type) == (2e-5, "constant")
