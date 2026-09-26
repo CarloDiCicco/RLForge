@@ -224,7 +224,8 @@ class GRPOExperimentConfig(BaseModel):
             backend="bwrap", timeout_s=60.0, cpu_s=60, mem_mb=8192
         )
     )
-    # Artifacts live OUTSIDE the repo (CLAUDE.md: ~/data/projects/RLForge/...).
+    # Run outputs go under runs/train/<experiment_id> in the repo (gitignored).
+    # Relative paths resolve against the CWD, so launch from the repo root.
     out_dir: str
 
     @field_validator("experiment_id", "model_id", "tasks_file", "train_split", "out_dir")

@@ -32,7 +32,9 @@ from rlforge.train.reward import VerifierReward
 # The LeetCode baseline whose labels we replay (RESEARCH_LOG 2026-07-23,
 # pass@1 = 0.401, 178/444). Run data lives outside the repo's test fixtures
 # because it is ~15 MB; the test skips cleanly if it is absent.
-_BASELINE_RUN = Path(__file__).resolve().parents[1] / "runs" / "20260723T135725Z-0a40d501"
+_BASELINE_RUN = (
+    Path(__file__).resolve().parents[1] / "runs" / "eval" / "20260723T135725Z-0a40d501"
+)
 _LEETCODE_TASKS = Path(__file__).resolve().parents[1] / "data" / "livecodebench_leetcode.jsonl"
 
 # Grading limits must match the baseline config, or the reward stops agreeing
