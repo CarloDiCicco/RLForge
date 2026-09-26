@@ -1,0 +1,121 @@
+# RL RUN #2 ("run13"): run12's design with the two defects that invalidated it fixed.
+#
+# Differences from grpo-lcb-leetcode-run12.yaml, and ONLY these (RESEARCH_LOG
+# 2026-09-26):
+#   1. Chat template applied. This is a code fix (train_grpo.py), not a config
+#      value; run12's prompts were raw text because TRL skips the template for
+#      plain-string prompts. enable_thinking: false is stated explicitly below.
+#   2. learning_rate 1e-6 -> 2e-5. 1e-6 is TRL's full-fine-tuning default; with
+#      LoRA it moved run12's weights by ~0.003%. Adam moves each weight ~LR per
+#      step, so expect |lora_B| ~ 12 x 2e-5 = 2.4e-4 (run12: 6.4e-6, ~37x less).
+#   3. lr_scheduler_type linear -> constant. Linear decays to 0 over max_steps,
+#      which on a 12-step run halves the average LR.
+# Everything else (tasks, sampling, rollouts, memory, sandbox, reward) is
+# identical to run12, so its measurements are directly comparable.
+#
+# Usage (from the repo root):
+#   tmux new -s run13
+#   .venv/bin/python scripts/train_grpo.py configs/grpo-lcb-leetcode-run13.yaml
+#   # detach: Ctrl-B then d     reattach: tmux attach -t run13
+#   # NEVER `tmux kill-server` while a run is live; it kills every session.
+#
+# Monitor:
+#   .venv/bin/tensorboard --logdir runs/train --port 6006
+#   scripts/run_status.sh
+#   # output: runs/train/<UTC timestamp>-grpo-lcb-leetcode-run13/
+
+experiment_id: grpo-lcb-leetcode-run13
+seed: 0
+model_id: Qwen/Qwen3.5-4B
+# Same pinned snapshot as the baselines — an RL delta against a baseline on a
+# different model snapshot would be uninterpretable.
+model_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+# Non-thinking, as in all three baselines. Stated explicitly, not left to a default.
+enable_thinking: false
+
+tasks_file: data/livecodebench_leetcode.jsonl
+train_split: data/splits/lcb_leetcode_train.json
+eval_split: data/splits/lcb_leetcode_eval.json
+# First 32 of the (sorted, deterministic) train split — a reproducible subset of
+# the real run's prompts, not a fresh random sample.
+max_train_tasks: 96
+
+# Parent folder: each launch creates runs/train/<UTC timestamp>-<experiment_id>/.
+out_dir: runs/train
+
+lora:
+  r: 32
+  lora_alpha: 64
+  lora_dropout: 0.0
+
+grpo:
+  # Rollout sampling = TRL defaults, deliberately NOT the benchmark's
+  # 0.7/0.8/20. GRPO learns from the spread of rewards inside a group; at low
+  # temperature the rollouts collapse toward one answer, advantages go to zero
+  # and the step teaches nothing. Evaluation still uses the frozen baseline
+  # values, so the reported number stays comparable.
+  temperature: 1.0
+  top_p: 1.0
+  top_k: 0
+  # Same budget as the baselines, so rollout truncation rates are directly
+  # comparable to the 21.6% measured on LeetCode.
+  max_completion_length: 2048
+  num_generations: 8
+  beta: 0.0
+  mask_truncated_completions: true
+  # See header: 2e-5 for LoRA (run12's 1e-6 barely moved the weights).
+  learning_rate: 2.0e-5
+  # Constant: no decay toward 0 on a 12-step run. No warmup needed at 12 steps.
+  lr_scheduler_type: constant
+  warmup_steps: 0
+  # HOW MANY TASKS INFORM ONE WEIGHT UPDATE. The first configuration used 1, which
+  # made every step hostage to whichever single task was drawn — the RL analogue of
+  # pretraining on one document at a time. 8 cuts that gradient noise ~8x.
+  # Advantages are still computed WITHIN each task's own 8 rollouts (GRPO's
+  # mechanism); this only sets how many such groups are averaged before stepping.
+  tasks_per_update: 8
+  # MEASURED (2026-09-12): the ONLY knob that drives the memory spike. At 8 the run
+  # OOMed claiming 117.5 of 121.7 GB, because Qwen3.5-4B's 248,320-token vocabulary
+  # makes the loss logits ~1 GB per 2048-token sequence in bf16. At 2 the measured
+  # peak was 22.9 GB. Raising tasks_per_update above costs TIME, not memory.
+  per_device_train_batch_size: 2
+  # gradient_accumulation_steps is DERIVED (tasks_per_update * num_generations /
+  # per_device_train_batch_size = 8*8/2 = 32) and validated in grpo_config.py, so
+  # the three numbers cannot silently disagree.
+  # Rollouts run under no_grad, but 16 concurrent 2048-token sequences hold a KV
+  # cache that is still resident when the loss runs, raising the floor the
+  # backward pass must fit above. 8 keeps most of the batching win (108 vs 145
+  # tok/s measured) for a noticeably lower peak.
+  generation_batch_size: 8
+  # ON. Turned off once on the strength of a 22.9 GB peak — but that peak was
+  # measured when an update held only 8 rollouts. At 64 (8 tasks x 8) the
+  # backward pass over 32 layers of stored activations OOMed at ~105 GB, the
+  # traceback landing in `backward`. ~30% step time is cheap against losing a
+  # 10-hour run.
+  gradient_checkpointing: true
+  # Hard VRAM ceiling. The GB10 shares one memory pool between CPU and GPU, so a
+  # run claiming ~105 of 121.7 GB starved the OS and locked the whole host on
+  # 2026-09-13. Capped, the same overrun kills only this job.
+  max_memory_fraction: 0.75
+  max_steps: 12
+  logging_steps: 1
+  save_steps: 4
+
+reward:
+  correctness_weight: 1.0
+  # Run #1 is correctness-only. The brevity term is implemented and tested but
+  # disabled, so enabling it later changes exactly one number and the two runs
+  # remain a clean one-variable comparison.
+  length_weight: 0.0
+  max_workers: 8
+
+# IDENTICAL to the three baseline configs. The reward must be the same predicate
+# as the benchmark's pass/fail or the RL delta is not measured against anything.
+# mem_mb 8192 especially: at the 512 MB default, tasks with large inlined test
+# data were killed during test COMPILATION and scored as model failures
+# (RESEARCH_LOG 2026-07-23).
+sandbox_config:
+  backend: bwrap
+  timeout_s: 60.0
+  cpu_s: 60
+  mem_mb: 8192
