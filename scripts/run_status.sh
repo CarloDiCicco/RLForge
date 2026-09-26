@@ -4,7 +4,9 @@
 #   scripts/run_status.sh                     # one shot
 set -uo pipefail
 
-RUN_DIR="${1:-$(dirname "$0")/../runs/train/grpo-lcb-leetcode-run12}"
+# Default: the most recently created train run folder.
+RUN_DIR="${1:-$(ls -td "$(dirname "$0")"/../runs/train/*/ 2>/dev/null | head -1)}"
+echo "run: $(basename "$RUN_DIR")"
 
 alive=$(pgrep -f "train_grpo.py" >/dev/null && echo RUNNING || echo "NOT RUNNING")
 rollouts=$(wc -l < "$RUN_DIR/executions.jsonl" 2>/dev/null || echo 0)
