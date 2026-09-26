@@ -199,8 +199,9 @@ AGENTS.md
 data/*
 !data/.gitkeep
 !data/humaneval_plus.jsonl
-!data/livecodebench_leetcode.jsonl
-!data/livecodebench_stdin_stdout.jsonl
+# LiveCodeBench datasets are NOT committed: 1 GB and 8.4 GB. Rebuild them with
+# scripts/prepare_livecodebench.py. An exception here once let a "stage all"
+# pick up the 8.4 GB file and lock git (2026-09-26).
 # The RL train/eval splits: a few KB of task_ids, and they DEFINE the experiment.
 # Without them committed, "pass@1 on 100 held-out tasks" is not a reproducible
 # claim and nobody can verify the eval tasks were never trained on.
