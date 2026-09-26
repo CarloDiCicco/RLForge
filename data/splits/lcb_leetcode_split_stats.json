@@ -1,0 +1,22 @@
+{
+ "n_tasks": 444,
+ "n_train": 344,
+ "n_eval": 100,
+ "seed": 0,
+ "tasks_file": "/home/carlo/repos/RLForge/data/livecodebench_leetcode.jsonl",
+ "difficulty_population": {
+  "easy": 135,
+  "medium": 207,
+  "hard": 102
+ },
+ "difficulty_eval": {
+  "easy": 30,
+  "hard": 23,
+  "medium": 47
+ },
+ "difficulty_train": {
+  "easy": 105,
+  "medium": 160,
+  "hard": 79
+ }
+}
