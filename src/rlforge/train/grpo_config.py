@@ -224,8 +224,10 @@ class GRPOExperimentConfig(BaseModel):
             backend="bwrap", timeout_s=60.0, cpu_s=60, mem_mb=8192
         )
     )
-    # Run outputs go under runs/train/<experiment_id> in the repo (gitignored).
-    # Relative paths resolve against the CWD, so launch from the repo root.
+    # PARENT folder for runs. Each launch creates its own fresh subfolder
+    # <out_dir>/<UTC timestamp>-<experiment_id> (train/run_dir.py), so relaunching a
+    # config never mixes into an earlier run. Same meaning as the eval pipeline's
+    # out_dir. Relative paths resolve against the CWD, so launch from the repo root.
     out_dir: str
 
     @field_validator("experiment_id", "model_id", "tasks_file", "train_split", "out_dir")

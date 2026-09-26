@@ -41,6 +41,7 @@ from rlforge.adapters.task_loader import load_tasks  # noqa: E402
 from rlforge.prompt_template import build_prompt_for_task  # noqa: E402
 from rlforge.train.grpo_config import GRPOExperimentConfig, load_grpo_config  # noqa: E402
 from rlforge.train.reward import VerifierReward  # noqa: E402
+from rlforge.train.run_dir import create_run_dir, finish_run, write_run_provenance  # noqa: E402
 
 
 class RewardStatsCallback(TrainerCallback):
@@ -187,7 +188,26 @@ def build_dataset(cfg: GRPOExperimentConfig) -> tuple[Dataset, dict]:
 
 def main(config_path: str) -> None:
     cfg = load_grpo_config(config_path)
+    # One fresh folder per launch (<out_dir>/<UTC timestamp>-<experiment_id>), with
+    # the config and provenance written BEFORE anything can fail. See run_dir.py.
+    run_dir = create_run_dir(cfg.out_dir, cfg.experiment_id)
+    write_run_provenance(run_dir, config_path, cfg, algorithm="grpo")
     print(f"[train_grpo] {cfg.experiment_id}")
+    print(f"[train_grpo] run folder: {run_dir}")
+    try:
+        _train(cfg, run_dir)
+    except KeyboardInterrupt:
+        finish_run(run_dir, "interrupted")
+        raise
+    except BaseException as exc:
+        finish_run(run_dir, "failed", error=f"{type(exc).__name__}: {exc}")
+        raise
+    finish_run(run_dir, "completed")
+    print(f"[train_grpo] done: {run_dir}")
+
+
+def _train(cfg, run_dir: Path) -> None:
+    """Build the reward, trainer and dataset, then train. All output goes to run_dir."""
 
     # Cap VRAM BEFORE the model loads. On the GB10 the CPU and GPU share one
     # unified memory pool, so a training run that claims nearly all of it starves
@@ -208,7 +228,7 @@ def main(config_path: str) -> None:
     # Per-generation execution log, beside the checkpoints: the RL twin of the
     # benchmark's executions.jsonl, so a failed rollout can be diagnosed (wrong
     # answer vs truncated vs timeout) instead of only counted.
-    exec_log = Path(cfg.out_dir) / "executions.jsonl"
+    exec_log = run_dir / "executions.jsonl"
     reward = VerifierReward(
         tasks,
         cfg.sandbox_config,
@@ -226,7 +246,7 @@ def main(config_path: str) -> None:
           f"sandbox={cfg.sandbox_config.sandbox_config_id}")
     print(f"[train_grpo] execution log: {exec_log}")
     # Per-step VRAM trace, written into the run folder beside the checkpoints.
-    vram_log = Path(cfg.out_dir) / "vram.jsonl"
+    vram_log = run_dir / "vram.jsonl"
     stats_callback = RewardStatsCallback(reward, vram_log_path=vram_log)
     print(f"[train_grpo] vram log: {vram_log}")
     # State the batch arithmetic explicitly. The relationship between these four
@@ -240,7 +260,7 @@ def main(config_path: str) -> None:
           f"{cfg.grpo.gradient_accumulation_steps} accumulation steps")
 
     args = GRPOConfig(
-        output_dir=cfg.out_dir,
+        output_dir=str(run_dir),
         # bfloat16 EXPLICITLY: TRL's model loader defaults to float32 when dtype is
         # unset, which would double the weight memory for no benefit and diverge
         # from the bf16 the baselines were generated in.
@@ -314,7 +334,7 @@ def main(config_path: str) -> None:
 
     # Save the adapter under a stable name the eval config can point at, rather
     # than leaving only step-numbered checkpoints.
-    final = Path(cfg.out_dir) / "final_adapter"
+    final = run_dir / "final_adapter"
     trainer.save_model(str(final))
     print(f"[train_grpo] adapter saved to {final}")
     if torch.cuda.is_available():

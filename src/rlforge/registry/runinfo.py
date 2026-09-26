@@ -96,6 +96,29 @@ def git_commit() -> str:
     return "unknown"
 
 
+def git_dirty() -> bool | None:
+    """True if TRACKED files have uncommitted changes; None if git is unavailable.
+
+    Complements git_commit(): a commit hash only reproduces the code if the tree
+    was clean when the run started. Untracked files are ignored on purpose, since
+    run outputs and local data would otherwise mark every run dirty.
+    Never raises, for the same reason as git_commit().
+    """
+    try:
+        out = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=os.path.dirname(__file__),
+        )
+        if out.returncode == 0:
+            return bool(out.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
 def hardware_info() -> dict[str, Any]:
     """Best-effort snapshot of the machine that produced the records.
 
