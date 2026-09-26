@@ -36,7 +36,7 @@ eval_split: data/splits/lcb_leetcode_eval.json
 # real runs train on.
 max_train_tasks: 8
 
-out_dir: runs/train/grpo-wiring-check
+out_dir: runs/train
 
 lora:
   r: 32

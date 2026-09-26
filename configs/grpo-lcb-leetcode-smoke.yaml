@@ -15,7 +15,7 @@
 #
 # Usage:ed
 #   python scripts/train_grpo.py configs/grpo-lcb-leetcode-smoke.yaml
-#   tensorboard --logdir runs/train/grpo-lcb-leetcode-smoke
+#   tensorboard --logdir runs/train
 
 experiment_id: grpo-lcb-leetcode-smoke
 seed: 0
@@ -31,8 +31,8 @@ eval_split: data/splits/lcb_leetcode_eval.json
 # the real run's prompts, not a fresh random sample.
 max_train_tasks: 24
 
-# Artifacts outside the repo (CLAUDE.md).
-out_dir: runs/train/grpo-lcb-leetcode-smoke
+# Parent folder: each launch creates runs/train/<UTC timestamp>-<experiment_id>/.
+out_dir: runs/train
 
 lora:
   r: 32

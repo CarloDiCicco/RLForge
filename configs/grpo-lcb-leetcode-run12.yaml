@@ -27,8 +27,8 @@
 #
 # Monitor:
 #   tensorboard --logdir runs/train --port 6006
-#   tail -f <out_dir>/vram.jsonl
-#   tail -f <out_dir>/executions.jsonl
+#   tail -f runs/train/<timestamp>-grpo-lcb-leetcode-run12/vram.jsonl
+#   tail -f runs/train/<timestamp>-grpo-lcb-leetcode-run12/executions.jsonl
 
 experiment_id: grpo-lcb-leetcode-run12
 seed: 0
@@ -44,8 +44,8 @@ eval_split: data/splits/lcb_leetcode_eval.json
 # the real run's prompts, not a fresh random sample.
 max_train_tasks: 96
 
-# Artifacts outside the repo (CLAUDE.md).
-out_dir: runs/train/grpo-lcb-leetcode-run12
+# Parent folder: each launch creates runs/train/<UTC timestamp>-<experiment_id>/.
+out_dir: runs/train
 
 lora:
   r: 32
