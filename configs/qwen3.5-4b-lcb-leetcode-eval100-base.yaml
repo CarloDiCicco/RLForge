@@ -34,7 +34,7 @@ generation:
   enable_thinking: false
 
 run:
-  out_dir: /home/carlo/data/projects/RLForge/runs/eval/qwen3.5-4b-lcb-leetcode-eval100-base
+  out_dir: runs/eval/qwen3.5-4b-lcb-leetcode-eval100-base
   n_samples: 1
   ks: [1]
   grading_role: hidden

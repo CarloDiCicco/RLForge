@@ -13,9 +13,9 @@
 #      story is instrumented from step 0;
 #   4. the adapter checkpoint saves AND reloads.
 #
-# Usage:
+# Usage:ed
 #   python scripts/train_grpo.py configs/grpo-lcb-leetcode-smoke.yaml
-#   tensorboard --logdir ~/data/projects/RLForge/runs/train/grpo-lcb-leetcode-smoke
+#   tensorboard --logdir runs/train/grpo-lcb-leetcode-smoke
 
 experiment_id: grpo-lcb-leetcode-smoke
 seed: 0
@@ -32,7 +32,7 @@ eval_split: data/splits/lcb_leetcode_eval.json
 max_train_tasks: 24
 
 # Artifacts outside the repo (CLAUDE.md).
-out_dir: /home/carlo/data/projects/RLForge/runs/train/grpo-lcb-leetcode-smoke
+out_dir: runs/train/grpo-lcb-leetcode-smoke
 
 lora:
   r: 32

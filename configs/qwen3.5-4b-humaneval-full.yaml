@@ -45,7 +45,7 @@ generation:
   enable_thinking: false
 
 run:
-  out_dir: runs
+  out_dir: runs/eval
   n_samples: 1
   ks: [1]
   grading_role: hidden

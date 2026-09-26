@@ -41,7 +41,7 @@ run:
   # In-repo, matching ReasoningLab's convention: runs/ lives in the repo
   # (gitignored contents, tracked folder) so `ls runs/` from the repo root
   # just works.
-  out_dir: runs
+  out_dir: runs/eval
   n_samples: 1
   ks: [1]
   grading_role: hidden

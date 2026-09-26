@@ -22,7 +22,7 @@
 # Usage:
 #   tmux new -s grpo
 #   python scripts/train_grpo.py configs/grpo-lcb-leetcode-full.yaml
-#   tensorboard --logdir ~/data/projects/RLForge/runs/train/grpo-lcb-leetcode-full
+#   tensorboard --logdir runs/train/grpo-lcb-leetcode-full
 #
 # Evaluate with configs/qwen3.5-4b-lcb-leetcode-eval100.yaml (adapter) and its
 # no-adapter twin — the baseline 0.401 is over all 444 tasks, NOT over the 100
@@ -42,7 +42,7 @@ train_split: data/splits/lcb_leetcode_train.json
 eval_split: data/splits/lcb_leetcode_eval.json
 # max_train_tasks omitted: use all 344 training tasks.
 
-out_dir: /home/carlo/data/projects/RLForge/runs/train/grpo-lcb-leetcode-full
+out_dir: runs/train/grpo-lcb-leetcode-full
 
 lora:
   r: 32

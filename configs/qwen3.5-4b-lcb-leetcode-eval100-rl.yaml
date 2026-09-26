@@ -24,7 +24,7 @@ seed: 0
 model_id: Qwen/Qwen3.5-4B
 model_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
 # The LoRA adapter produced by configs/grpo-lcb-leetcode-full.yaml.
-adapter_path: /home/carlo/data/projects/RLForge/runs/train/grpo-lcb-leetcode-full/final_adapter
+adapter_path: runs/train/grpo-lcb-leetcode-run12/final_adapter
 
 tasks_file: data/livecodebench_leetcode.jsonl
 task_ids_file: data/splits/lcb_leetcode_eval.json
@@ -43,7 +43,7 @@ generation:
   enable_thinking: false
 
 run:
-  out_dir: /home/carlo/data/projects/RLForge/runs/eval/qwen3.5-4b-lcb-leetcode-eval100-rl
+  out_dir: runs/eval/qwen3.5-4b-lcb-leetcode-eval100-rl
   n_samples: 1
   ks: [1]
   grading_role: hidden
