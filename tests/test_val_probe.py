@@ -179,8 +179,15 @@ def test_serious_config_matches_validated_run_except_scale():
     assert (big.grpo.lr_scheduler_type, big.grpo.warmup_steps) == ("constant_with_warmup", 5)
     assert big.grpo.learning_rate == small.grpo.learning_rate == 2e-5
     assert small.grpo.model_dump(exclude=scale) == big.grpo.model_dump(exclude=scale)
-    for block in ("lora", "reward", "sandbox_config"):
+    for block in ("reward", "sandbox_config"):
         assert getattr(small, block) == getattr(big, block), block
+    # Same adapter shape; the long run additionally adapts the linear-attention
+    # projections, so that every block's attention has an adapter (2026-10-10).
+    assert small.lora.model_dump(exclude={"target_modules"}) == \
+        big.lora.model_dump(exclude={"target_modules"})
+    assert set(big.lora.target_modules) - set(small.lora.target_modules) == {
+        "in_proj_qkv", "in_proj_z", "in_proj_a", "in_proj_b", "out_proj"}
+    assert set(small.lora.target_modules) <= set(big.lora.target_modules)
     assert (small.model_revision, small.enable_thinking, small.seed) == \
         (big.model_revision, big.enable_thinking, big.seed)
     assert big.max_train_tasks is None and big.train_split.endswith("v2_train.json")

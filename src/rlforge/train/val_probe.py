@@ -194,15 +194,13 @@ class ValidationProbe(TrainerCallback):
             return None  # the final step can also be a multiple of every_steps
         self._last_probed_step = step
         k = self._cfg.samples_per_task
-        n_total = len(self._task_ids) * k
-        print(f"\n[val] step {step}: sampling {n_total} answers "
-              f"({len(self._task_ids)} tasks x {k})", flush=True)
+        n_tasks = len(self._task_ids)
+        print(f"\n[val] step {step}: {k} rounds, each = one answer for each of the "
+              f"{n_tasks} validation tasks", flush=True)
         t0 = time.time()
-
-        # Order: all tasks once, then again, k times. A batch therefore holds
-        # different tasks, and a task's k answers land in different batches.
-        order = [tid for _ in range(k) for tid in self._task_ids]
-        sample_idx = [i for i in range(k) for _ in self._task_ids]
+        t_gen = 0.0
+        records: list[dict] = []
+        prompts = [self._prompts[tid] for tid in self._task_ids]
 
         was_training = model.training
         cpu_rng = torch.random.get_rng_state()
@@ -210,43 +208,48 @@ class ValidationProbe(TrainerCallback):
         try:
             model.eval()
             torch.manual_seed(self._cfg.seed)
-            samples = self._generate(model, [self._prompts[tid] for tid in order])
+            # One ROUND = one answer per task. Rounds are generated and graded one
+            # at a time so progress is visible and written to disk as it happens:
+            # a full probe takes tens of minutes, and silence that long is
+            # indistinguishable from a hang.
+            for rnd in range(k):
+                t_round = time.time()
+                samples = self._generate(model, prompts)
+                t_gen += time.time() - t_round
+                with ThreadPoolExecutor(max_workers=self._grader.max_workers) as pool:
+                    graded = list(pool.map(
+                        self._grader.grade, self._task_ids, [s[0] for s in samples]))
+                round_records = [
+                    {
+                        "step": step, "task_id": tid, "sample": rnd,
+                        "correctness": g["correctness"], "failure_type": g["failure_type"],
+                        "extraction_status": g["extraction_status"],
+                        "exec_time_s": g["exec_time_s"], "code_chars": g["code_chars"],
+                        "completion_tokens": n_tokens, "hit_token_cap": hit_cap,
+                        "stderr": (g["stderr"] or "")[-2000:],
+                    }
+                    for tid, (_text, n_tokens, hit_cap), g in zip(
+                        self._task_ids, samples, graded, strict=True)
+                ]
+                records.extend(round_records)
+                self._append(self._exec_path, round_records)
+                n_pass = sum(r["correctness"] for r in round_records)
+                n_cut = sum(r["hit_token_cap"] for r in round_records)
+                print(f"[val] step {step}: round {rnd + 1}/{k}  {n_pass:.0f}/{n_tasks} passed  "
+                      f"{n_cut} cut off at the token limit  "
+                      f"({(time.time() - t_round) / 60:.1f} min)", flush=True)
         finally:
             # Hand the training loop back exactly the state it had.
             torch.random.set_rng_state(cpu_rng)
             if cuda_rng is not None:
                 torch.cuda.set_rng_state_all(cuda_rng)
             model.train(was_training)
-        t_gen = time.time() - t0
-
-        with ThreadPoolExecutor(max_workers=self._grader.max_workers) as pool:
-            graded = list(pool.map(self._grader.grade, order, [s[0] for s in samples]))
-
-        records = []
-        for tid, idx, (_text, n_tokens, hit_cap), g in zip(
-            order, sample_idx, samples, graded, strict=True
-        ):
-            records.append({
-                "step": step, "task_id": tid, "sample": idx,
-                "correctness": g["correctness"], "failure_type": g["failure_type"],
-                "extraction_status": g["extraction_status"],
-                "exec_time_s": g["exec_time_s"], "code_chars": g["code_chars"],
-                "completion_tokens": n_tokens, "hit_token_cap": hit_cap,
-                "stderr": (g["stderr"] or "")[-2000:],
-            })
 
         metrics = summarize(records, k)
         summary = {"step": step, "n_tasks": len(self._task_ids), "samples_per_task": k,
                    "gen_seconds": round(t_gen, 1),
                    "total_seconds": round(time.time() - t0, 1), **metrics}
-        try:
-            with self._exec_path.open("a", encoding="utf-8") as fh:
-                for r in records:
-                    fh.write(json.dumps(r) + "\n")
-            with self._summary_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(summary) + "\n")
-        except OSError:
-            pass  # logging must never kill a training run
+        self._append(self._summary_path, [summary])
 
         self._to_tensorboard(step, metrics)
         # The peak-memory counters are deliberately NOT reset here. The training
@@ -254,12 +257,22 @@ class ValidationProbe(TrainerCallback):
         # step's VRAM reading miss the training step's own peak (seen in the wiring
         # check, 2026-10-10). Left alone, a probe step reports the true maximum of
         # the step and the probe together.
-        print(f"[val] step {step}: pass {metrics['pass_rate']:.3f}  "
-              f"solved-any {metrics['tasks_solved_any']:.0%}  "
-              f"truncated {metrics['truncated_rate']:.0%}  "
-              f"mean tokens {metrics['mean_completion_tokens']:.0f}  "
+        print(f"[val] step {step} RESULT: pass rate {metrics['pass_rate']:.3f} "
+              f"({sum(r['correctness'] for r in records):.0f}/{len(records)} answers)  "
+              f"tasks solved at least once {metrics['tasks_solved_any']:.0%}  "
+              f"cut off {metrics['truncated_rate']:.0%}  "
               f"({summary['total_seconds'] / 60:.1f} min)", flush=True)
         return metrics
+
+    @staticmethod
+    def _append(path: Path, rows: list[dict]) -> None:
+        """Append JSON lines. Logging must never kill a training run."""
+        try:
+            with path.open("a", encoding="utf-8") as fh:
+                for row in rows:
+                    fh.write(json.dumps(row) + "\n")
+        except OSError:
+            pass
 
     def _to_tensorboard(self, step: int, metrics: dict[str, float]) -> None:
         """Write under `eval/` with the trainer's own TensorBoard writer.
