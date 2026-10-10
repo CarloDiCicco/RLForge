@@ -109,6 +109,49 @@ def make_split(
     return sorted(train_ids), sorted(eval_ids), stats
 
 
+def make_val_split(
+    train_ids: list[str],
+    difficulty_of: dict[str, str],
+    n_val: int = 44,
+    seed: int = 0,
+) -> tuple[list[str], list[str]]:
+    """Carve a validation set out of the TRAIN ids. Returns (train_ids, val_ids).
+
+    Why a third set: the 100 held-out tasks are the TEST set, scored once at the
+    end. Anything looked at during development (the learning curve, choosing a
+    learning rate, deciding when to stop) must come from somewhere else, or those
+    choices fit the test set's luck and the reported number is optimistic. LeetCode
+    has only 444 tasks, so the validation tasks can only come from train.
+
+    Stratified by difficulty for the same reason as the test split. The test ids
+    are never touched here, so runs evaluated on them stay comparable.
+    """
+    by_difficulty: dict[str, list[str]] = defaultdict(list)
+    for task_id in train_ids:
+        by_difficulty[difficulty_of[task_id]].append(task_id)
+
+    rng = Random(seed)
+    val_ids: list[str] = []
+    for difficulty in sorted(by_difficulty):
+        ids = sorted(by_difficulty[difficulty])
+        rng.shuffle(ids)
+        val_ids.extend(ids[: round(n_val * len(ids) / len(train_ids))])
+
+    # Fix per-stratum rounding against the remaining pool, as make_split does.
+    remaining = [t for t in sorted(train_ids) if t not in set(val_ids)]
+    rng.shuffle(remaining)
+    while len(val_ids) < n_val and remaining:
+        val_ids.append(remaining.pop())
+    while len(val_ids) > n_val:
+        val_ids.pop()
+
+    val_set = set(val_ids)
+    new_train = [t for t in train_ids if t not in val_set]
+    assert len(val_ids) == n_val and len(val_set) == n_val
+    assert len(new_train) + n_val == len(train_ids) and not (set(new_train) & val_set)
+    return sorted(new_train), sorted(val_ids)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tasks-file", default=str(_DEFAULT_TASKS))
@@ -116,6 +159,12 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out-dir", default=str(_DEFAULT_OUT))
     ap.add_argument("--prefix", default="lcb_leetcode")
+    ap.add_argument(
+        "--n-val", type=int, default=0,
+        help="If > 0, ALSO write a three-way split <prefix>_v2_{train,val,test}.json: "
+             "the test ids are the eval ids above, and n-val validation tasks are "
+             "carved out of train. The two-way files are written unchanged.",
+    )
     args = ap.parse_args()
 
     train_ids, eval_ids, stats = make_split(args.tasks_file, args.n_eval, args.seed)
@@ -135,6 +184,28 @@ def main() -> None:
         print(f"  {d:<8} population {pop[d]:>3} ({share_pop:4.1f}%)   "
               f"eval {ev.get(d, 0):>3} ({share_ev:4.1f}%)")
     print(f"[make_rl_split] wrote {out}/{args.prefix}_{{train,eval,split_stats}}.json")
+
+    if args.n_val > 0:
+        tasks = load_tasks(args.tasks_file)
+        diff_of = {t.task_id: (t.metadata.get("difficulty") or "unknown") for t in tasks}
+        train_v2, val_ids = make_val_split(train_ids, diff_of, args.n_val, args.seed)
+        v2 = f"{args.prefix}_v2"
+        (out / f"{v2}_train.json").write_text(json.dumps(train_v2, indent=1) + "\n")
+        (out / f"{v2}_val.json").write_text(json.dumps(val_ids, indent=1) + "\n")
+        # Same ids as <prefix>_eval.json, under the name that says what it is for.
+        (out / f"{v2}_test.json").write_text(json.dumps(eval_ids, indent=1) + "\n")
+        v2_stats = {
+            "n_tasks": stats["n_tasks"], "seed": args.seed,
+            "n_train": len(train_v2), "n_val": len(val_ids), "n_test": len(eval_ids),
+            "difficulty_train": dict(Counter(diff_of[i] for i in train_v2)),
+            "difficulty_val": dict(Counter(diff_of[i] for i in val_ids)),
+            "difficulty_test": dict(Counter(diff_of[i] for i in eval_ids)),
+        }
+        (out / f"{v2}_split_stats.json").write_text(json.dumps(v2_stats, indent=1) + "\n")
+        print(f"[make_rl_split] v2: {len(train_v2)} train / {len(val_ids)} val / "
+              f"{len(eval_ids)} test -> {out}/{v2}_*.json")
+        for name in ("train", "val", "test"):
+            print(f"  {name:<5} {v2_stats['difficulty_' + name]}")
 
 
 if __name__ == "__main__":

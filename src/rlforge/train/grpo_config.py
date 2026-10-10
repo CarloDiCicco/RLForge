@@ -203,6 +203,36 @@ class GRPOBlock(BaseModel):
         return value
 
 
+class ValidationBlock(BaseModel):
+    """Held-out validation probe run DURING training (train/val_probe.py).
+
+    Scores the same validation tasks at fixed step intervals, so the result is a
+    real learning curve. `train/reward` cannot be one: every step draws different
+    tasks, so it moves with task difficulty as much as with the policy.
+
+    Sampling defaults are the frozen BASELINE values (0.7 / 0.8 / 20, presence
+    penalty 1.5), not the rollout values, so the probe measures the policy the way
+    the final evaluation will.
+    """
+
+    # Path to the validation ids (data/splits/*_val.json). Must be disjoint from
+    # both the train split and the test split.
+    split: str
+    # Probe at step 0 (the untrained reference), then every N optimizer steps, and
+    # at the last step. Checkpoints should be saved on the same steps.
+    every_steps: int = Field(ge=1)
+    # Answers sampled per task. More = a steadier number, linearly more time.
+    samples_per_task: int = Field(default=4, ge=1)
+    batch_size: int = Field(default=16, ge=1)
+    temperature: float = Field(default=0.7, gt=0.0)
+    top_p: float = Field(default=0.8, gt=0.0, le=1.0)
+    top_k: int = Field(default=20, ge=0)
+    presence_penalty: float = Field(default=1.5, ge=0.0)
+    # Fixed across probes on purpose: every checkpoint is sampled with the same
+    # random stream, so differences between probes come from the weights.
+    seed: int = Field(default=1234, ge=0)
+
+
 class GRPOExperimentConfig(BaseModel):
     """Top-level contract for one RL run."""
 
@@ -228,6 +258,10 @@ class GRPOExperimentConfig(BaseModel):
     eval_split: str | None = Field(default=None)
     # Cap for smoke runs. None = use the whole train split.
     max_train_tasks: int | None = Field(default=None, ge=1)
+    # Optional validation probe. None = no probe (the older configs).
+    validation: ValidationBlock | None = Field(default=None)
+    # Cap on validation tasks, for wiring checks only.
+    max_val_tasks: int | None = Field(default=None, ge=1)
 
     lora: LoraConfigBlock = Field(default_factory=LoraConfigBlock)
     grpo: GRPOBlock = Field(default_factory=GRPOBlock)

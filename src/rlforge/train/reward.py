@@ -292,6 +292,15 @@ class VerifierReward:
 
     # ── per-completion grading ────────────────────────────────────────────────
 
+    def grade(self, task_id: str, completion: str) -> dict:
+        """Grade one completion and return its full record. Never raises.
+
+        Public entry point for callers outside the TRL reward protocol (the
+        validation probe). Same grading as a training rollout, with no logging and
+        no effect on the per-batch statistics.
+        """
+        return self._score_one(task_id, _completion_text(completion))
+
     def _score_one(self, task_id: str, completion: str) -> dict:
         """Grade one completion and return a full diagnostic record.
 
