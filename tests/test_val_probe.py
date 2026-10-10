@@ -171,10 +171,13 @@ def test_v2_val_difficulty_tracks_train():
 
 
 def test_serious_config_matches_validated_run_except_scale():
-    """Only scale and the probe may differ from the validated 12-step run."""
+    """Only scale, the warmup and the probe may differ from the validated 12-step run."""
     small = load_grpo_config(_CONFIGS / "grpo-lcb-leetcode-12step-lr2e-5.yaml")
     big = load_grpo_config(_CONFIGS / "grpo-leetcode-3ep.yaml")
-    scale = {"max_steps", "save_steps"}
+    # Warmup was added for the long run (decided 2026-10-10); the peak rate is the same.
+    scale = {"max_steps", "save_steps", "lr_scheduler_type", "warmup_steps"}
+    assert (big.grpo.lr_scheduler_type, big.grpo.warmup_steps) == ("constant_with_warmup", 5)
+    assert big.grpo.learning_rate == small.grpo.learning_rate == 2e-5
     assert small.grpo.model_dump(exclude=scale) == big.grpo.model_dump(exclude=scale)
     for block in ("lora", "reward", "sandbox_config"):
         assert getattr(small, block) == getattr(big, block), block

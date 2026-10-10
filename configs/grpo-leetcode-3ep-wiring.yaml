@@ -66,9 +66,15 @@ grpo:
   mask_truncated_completions: true
   # See header: 2e-5 for LoRA (run12's 1e-6 barely moved the weights).
   learning_rate: 2.0e-5
-  # Constant: no decay toward 0 on a 12-step run. No warmup needed at 12 steps.
-  lr_scheduler_type: constant
-  warmup_steps: 0
+  # Linear ramp from 0 to the full rate over the first 5 updates, then constant.
+  # Warmup: Adam has no gradient history in its first steps, so it moves every
+  # weight by the full rate whatever the signal is; starting low avoids that.
+  # No decay on purpose: with a constant rate, a validation curve that flattens
+  # means the model stopped improving, not that the schedule slowed it down.
+  # Actual rates of updates 1-6: 0, 4e-6, 8e-6, 1.2e-5, 1.6e-5, 2e-5 (HF starts
+  # the ramp at exactly 0, so the first update changes nothing).
+  lr_scheduler_type: constant_with_warmup
+  warmup_steps: 5
   # HOW MANY TASKS INFORM ONE WEIGHT UPDATE. The first configuration used 1, which
   # made every step hostage to whichever single task was drawn — the RL analogue of
   # pretraining on one document at a time. 8 cuts that gradient noise ~8x.
