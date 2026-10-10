@@ -24,8 +24,9 @@ except Exception:
     print("? 64")
 PY
 )
-rollouts=$(wc -l < "$RUN_DIR/executions.jsonl" 2>/dev/null || echo 0)
-rollouts=${rollouts:-0}
+# The file does not exist until the first rollouts are graded.
+rollouts=0
+[ -f "$RUN_DIR/executions.jsonl" ] && rollouts=$(wc -l < "$RUN_DIR/executions.jsonl")
 status=$(grep -o '"status": "[a-z]*"' "$RUN_DIR/run_meta.json" 2>/dev/null | cut -d'"' -f4)
 vram=$(tail -1 "$RUN_DIR/vram.jsonl" 2>/dev/null | grep -o '"reserved_gb": [0-9.]*' | cut -d' ' -f2)
 
