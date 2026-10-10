@@ -1,4 +1,4 @@
-# RL RUN #2 ("run13"): run12's design with the two defects that invalidated it fixed.
+# RL RUN #2 (grpo-lcb-leetcode-12step-lr2e-5): run12's design with the two defects that invalidated it fixed.
 #
 # Differences from grpo-lcb-leetcode-run12.yaml, and ONLY these (RESEARCH_LOG
 # 2026-09-26):
@@ -14,17 +14,17 @@
 # identical to run12, so its measurements are directly comparable.
 #
 # Usage (from the repo root):
-#   tmux new -s run13
-#   .venv/bin/python scripts/train_grpo.py configs/grpo-lcb-leetcode-run13.yaml
-#   # detach: Ctrl-B then d     reattach: tmux attach -t run13
+#   tmux new -s lr2e-5
+#   .venv/bin/python scripts/train_grpo.py configs/grpo-lcb-leetcode-12step-lr2e-5.yaml
+#   # detach: Ctrl-B then d     reattach: tmux attach -t lr2e-5
 #   # NEVER `tmux kill-server` while a run is live; it kills every session.
 #
 # Monitor:
 #   .venv/bin/tensorboard --logdir runs/train --port 6006
 #   scripts/run_status.sh
-#   # output: runs/train/<UTC timestamp>-grpo-lcb-leetcode-run13/
+#   # output: runs/train/<UTC timestamp>-grpo-lcb-leetcode-12step-lr2e-5/
 
-experiment_id: grpo-lcb-leetcode-run13
+experiment_id: grpo-lcb-leetcode-12step-lr2e-5
 seed: 0
 model_id: Qwen/Qwen3.5-4B
 # Same pinned snapshot as the baselines — an RL delta against a baseline on a

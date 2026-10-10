@@ -1,0 +1,150 @@
+# FIRST SERIOUS RUN: GRPO on Qwen3.5-4B, LiveCodeBench-LeetCode, 3 passes over
+# 300 training tasks, with a held-out validation curve.
+#
+# The question: does GRPO improve the model on tasks it never trained on?
+# Answered by (a) the validation curve DURING the run, and (b) one evaluation of
+# the chosen checkpoint on the 100 test tasks AFTER the run.
+#
+# Settings are those of the validated 12-step run
+# (grpo-lcb-leetcode-12step-lr2e-5.yaml, RESEARCH_LOG 2026-09-26). Differences:
+#   - train split: 300 tasks (lcb_leetcode_v2_train.json), no cap
+#   - max_steps: 114 = 3 passes. One pass = 300 tasks / 8 per step = 37.5, which
+#     HF runs as 38 optimizer steps (the last one of each pass holds 4 tasks).
+#   - validation probe: 44 held-out tasks x 4 answers at steps 0, 19, 38, 57, 76,
+#     95, 114, i.e. twice per pass and exactly at the end of each pass
+#   - a checkpoint on the same steps, so any probed point can be evaluated later
+# The 100 test tasks (lcb_leetcode_v2_test.json) are NOT used anywhere in this run.
+#
+# Expected: ~20 min/step + ~7 probes => roughly 40-45 h. Measured numbers replace
+# this estimate after the wiring check.
+#
+# Usage (from the repo root):
+#   tmux new -s grpo3ep
+#   .venv/bin/python scripts/train_grpo.py configs/grpo-leetcode-3ep.yaml
+#   # detach: Ctrl-B then d     reattach: tmux attach -t grpo3ep
+#   # NEVER `tmux kill-server` while a run is live; it kills every session.
+#
+# If it crashes, continue from the last checkpoint (new run folder, same weights,
+# optimizer and step counter):
+#   .venv/bin/python scripts/train_grpo.py configs/grpo-leetcode-3ep.yaml \
+#       --resume runs/train/<run folder>/checkpoint-<N>
+#
+# Monitor:
+#   .venv/bin/tensorboard --logdir runs/tb --port 6006     # short run names
+#   scripts/run_status.sh
+#   tail -f runs/train/<run folder>/val_summary.jsonl
+
+experiment_id: grpo-leetcode-3ep
+seed: 0
+model_id: Qwen/Qwen3.5-4B
+# Same pinned snapshot as the baselines — an RL delta against a baseline on a
+# different model snapshot would be uninterpretable.
+model_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+# Non-thinking, as in all three baselines. Stated explicitly, not left to a default.
+enable_thinking: false
+
+tasks_file: data/livecodebench_leetcode.jsonl
+# Three-way split (scripts/make_rl_split.py --n-val 44): 300 train / 44 val / 100 test.
+train_split: data/splits/lcb_leetcode_v2_train.json
+# The TEST set. Recorded for provenance only; this run never reads it.
+eval_split: data/splits/lcb_leetcode_v2_test.json
+# No max_train_tasks: all 300 training tasks.
+
+# Held-out validation probe (train/val_probe.py). Sampling = the frozen BASELINE
+# settings, not the rollout settings, so the curve is read on the same scale as the
+# final test evaluation.
+validation:
+  split: data/splits/lcb_leetcode_v2_val.json
+  # 19 = half a pass (38 steps). Probes land on steps 0, 19, 38, 57, 76, 95, 114.
+  every_steps: 19
+  # 44 x 4 = 176 answers per probe. Fewer, steadier points were preferred over more,
+  # noisier ones: with 44 tasks, one answer per task moves several points by luck.
+  samples_per_task: 4
+  batch_size: 16
+  temperature: 0.7
+  top_p: 0.8
+  top_k: 20
+  presence_penalty: 1.5
+  seed: 1234
+
+# Parent folder: each launch creates runs/train/<UTC timestamp>-<experiment_id>/.
+out_dir: runs/train
+
+lora:
+  r: 32
+  lora_alpha: 64
+  lora_dropout: 0.0
+
+grpo:
+  # Rollout sampling = TRL defaults, deliberately NOT the benchmark's
+  # 0.7/0.8/20. GRPO learns from the spread of rewards inside a group; at low
+  # temperature the rollouts collapse toward one answer, advantages go to zero
+  # and the step teaches nothing. Evaluation still uses the frozen baseline
+  # values, so the reported number stays comparable.
+  temperature: 1.0
+  top_p: 1.0
+  top_k: 0
+  # Same budget as the baselines, so rollout truncation rates are directly
+  # comparable to the 21.6% measured on LeetCode.
+  max_completion_length: 2048
+  num_generations: 8
+  beta: 0.0
+  mask_truncated_completions: true
+  # See header: 2e-5 for LoRA (run12's 1e-6 barely moved the weights).
+  learning_rate: 2.0e-5
+  # Constant: no decay toward 0 on a 12-step run. No warmup needed at 12 steps.
+  lr_scheduler_type: constant
+  warmup_steps: 0
+  # HOW MANY TASKS INFORM ONE WEIGHT UPDATE. The first configuration used 1, which
+  # made every step hostage to whichever single task was drawn — the RL analogue of
+  # pretraining on one document at a time. 8 cuts that gradient noise ~8x.
+  # Advantages are still computed WITHIN each task's own 8 rollouts (GRPO's
+  # mechanism); this only sets how many such groups are averaged before stepping.
+  tasks_per_update: 8
+  # MEASURED (2026-09-12): the ONLY knob that drives the memory spike. At 8 the run
+  # OOMed claiming 117.5 of 121.7 GB, because Qwen3.5-4B's 248,320-token vocabulary
+  # makes the loss logits ~1 GB per 2048-token sequence in bf16. At 2 the measured
+  # peak was 22.9 GB. Raising tasks_per_update above costs TIME, not memory.
+  per_device_train_batch_size: 2
+  # gradient_accumulation_steps is DERIVED (tasks_per_update * num_generations /
+  # per_device_train_batch_size = 8*8/2 = 32) and validated in grpo_config.py, so
+  # the three numbers cannot silently disagree.
+  # Rollouts run under no_grad, but 16 concurrent 2048-token sequences hold a KV
+  # cache that is still resident when the loss runs, raising the floor the
+  # backward pass must fit above. 8 keeps most of the batching win (108 vs 145
+  # tok/s measured) for a noticeably lower peak.
+  generation_batch_size: 8
+  # ON. Turned off once on the strength of a 22.9 GB peak — but that peak was
+  # measured when an update held only 8 rollouts. At 64 (8 tasks x 8) the
+  # backward pass over 32 layers of stored activations OOMed at ~105 GB, the
+  # traceback landing in `backward`. ~30% step time is cheap against losing a
+  # 10-hour run.
+  gradient_checkpointing: true
+  # Hard VRAM ceiling. The GB10 shares one memory pool between CPU and GPU, so a
+  # run claiming ~105 of 121.7 GB starved the OS and locked the whole host on
+  # 2026-09-13. Capped, the same overrun kills only this job.
+  max_memory_fraction: 0.75
+  # 3 passes over 300 tasks (38 optimizer steps each).
+  max_steps: 114
+  logging_steps: 1
+  # Same steps as the validation probe (~506 MB each, 6 checkpoints).
+  save_steps: 19
+
+reward:
+  correctness_weight: 1.0
+  # Run #1 is correctness-only. The brevity term is implemented and tested but
+  # disabled, so enabling it later changes exactly one number and the two runs
+  # remain a clean one-variable comparison.
+  length_weight: 0.0
+  max_workers: 8
+
+# IDENTICAL to the three baseline configs. The reward must be the same predicate
+# as the benchmark's pass/fail or the RL delta is not measured against anything.
+# mem_mb 8192 especially: at the 512 MB default, tasks with large inlined test
+# data were killed during test COMPILATION and scored as model failures
+# (RESEARCH_LOG 2026-07-23).
+sandbox_config:
+  backend: bwrap
+  timeout_s: 60.0
+  cpu_s: 60
+  mem_mb: 8192
