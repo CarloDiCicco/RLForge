@@ -249,10 +249,11 @@ class ValidationProbe(TrainerCallback):
             pass  # logging must never kill a training run
 
         self._to_tensorboard(step, metrics)
-        if torch.cuda.is_available():
-            # Keep the probe's generation peak out of the next training step's
-            # VRAM reading.
-            torch.cuda.reset_peak_memory_stats()
+        # The peak-memory counters are deliberately NOT reset here. The training
+        # script reads them right after this callback, so a reset would make that
+        # step's VRAM reading miss the training step's own peak (seen in the wiring
+        # check, 2026-10-10). Left alone, a probe step reports the true maximum of
+        # the step and the probe together.
         print(f"[val] step {step}: pass {metrics['pass_rate']:.3f}  "
               f"solved-any {metrics['tasks_solved_any']:.0%}  "
               f"truncated {metrics['truncated_rate']:.0%}  "
