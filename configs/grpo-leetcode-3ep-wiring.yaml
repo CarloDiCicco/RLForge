@@ -34,7 +34,11 @@ validation:
   # 44 x 4 = 176 answers per probe. Fewer, steadier points were preferred over more,
   # noisier ones: with 44 tasks, one answer per task moves several points by luck.
   samples_per_task: 2
-  batch_size: 16
+  # 22 = each round of 44 answers is 2 generation batches (16 needed 3). A batch
+  # only ends when its slowest answer ends, so fewer batches waste less time.
+  # Measured at 16: ~6 min per batch, ~1 h per probe. Estimated at 22: ~37 min,
+  # with ~30 GB of memory (a batch of 44 would save ~5 more minutes for ~50 GB).
+  batch_size: 22
   temperature: 0.7
   top_p: 0.8
   top_k: 20
@@ -48,6 +52,27 @@ lora:
   r: 32
   lora_alpha: 64
   lora_dropout: 0.0
+  # EVERY linear projection in EVERY block. Qwen3.5-4B is a hybrid: of its 32
+  # blocks, only 8 (3, 7, 11, ..., 31) use standard attention (q/k/v/o_proj). The
+  # other 24 use "linear attention" (Qwen3_5GatedDeltaNet), whose projections have
+  # different names. The earlier runs listed only the standard names, so the
+  # attention of those 24 blocks had no adapter (found 2026-10-10). Listed in full:
+  target_modules:
+    # standard attention, 8 blocks
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    # linear attention, 24 blocks
+    - in_proj_qkv
+    - in_proj_z
+    - in_proj_a
+    - in_proj_b
+    - out_proj
+    # feed-forward, all 32 blocks
+    - gate_proj
+    - up_proj
+    - down_proj
 
 grpo:
   # Rollout sampling = TRL defaults, deliberately NOT the benchmark's
