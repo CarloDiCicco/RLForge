@@ -1,0 +1,58 @@
+# CROSS-CHECK ONLY: the trained adapter on the 44 VALIDATION tasks through the test
+# pipeline (one answer per task). Purpose: confirm this pipeline reproduces what the
+# in-training validation probe measured (untrained 18/44 here; probe 0.386 -> 0.500).
+
+# EVAL of the RL-trained policy: 100 held-out LiveCodeBench-LeetCode tasks.
+#
+# This is the headline number for RL run #1. Two properties make it honest:
+#
+#   1. The 100 tasks come from data/splits/lcb_leetcode_eval.json and were NEVER
+#      trained on (disjoint from the 344-task train split, asserted at split
+#      time). Without task_ids_file this run would score all 444 — including the
+#      344 the policy trained on — and report train-set performance.
+#   2. Sampling is the FROZEN BASELINE configuration (temperature 0.7, top_p 0.8,
+#      top_k 20, presence_penalty 1.5, 2048 tokens), NOT the temperature 1.0 used
+#      for rollouts during training. Training and evaluation sampling are
+#      different jobs; evaluating at the training temperature would make this
+#      number incomparable to the three baselines in RESEARCH_LOG.
+#
+# Must be compared against qwen3.5-4b-lcb-leetcode-eval100-base.yaml — the
+# identical run WITHOUT the adapter. The published 0.401 is over all 444 tasks,
+# not over these 100, so it is NOT the right comparison point.
+#
+# Usage:
+#   python scripts/run_experiment.py configs/qwen3.5-4b-lcb-leetcode-eval100-rl.yaml
+
+experiment_id: qwen3.5-4b-lcb-leetcode-val44-rl
+seed: 0
+model_id: Qwen/Qwen3.5-4B
+model_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+# The LoRA adapter produced by configs/grpo-leetcode-3ep.yaml (step 114, best on validation).
+adapter_path: runs/train/20261010T135414Z-grpo-leetcode-3ep/final_adapter
+
+tasks_file: data/livecodebench_leetcode.jsonl
+task_ids_file: data/splits/lcb_leetcode_v2_val.json
+
+generation:
+  # Frozen baseline values — identical to qwen3.5-4b-livecodebench-full.yaml so
+  # the only difference between this run and the baseline is the adapter.
+  max_new_tokens: 2048
+  do_sample: true
+  temperature: 0.7
+  top_p: 0.8
+  top_k: 20
+  min_p: 0.0
+  repetition_penalty: 1.0
+  presence_penalty: 1.5
+  enable_thinking: false
+
+run:
+  out_dir: runs/eval/qwen3.5-4b-lcb-leetcode-val44-rl
+  n_samples: 1
+  ks: [1]
+  grading_role: hidden
+  sandbox_config:
+    backend: bwrap
+    timeout_s: 60.0
+    cpu_s: 60
+    mem_mb: 8192

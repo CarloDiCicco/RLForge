@@ -60,6 +60,59 @@ class _PresencePenaltyLogitsProcessor(LogitsProcessor):
         return scores
 
 
+def remap_adapter_keys(saved: dict, expected: set[str]) -> dict:
+    """Rename saved LoRA weight names so they match the model being loaded into.
+
+    Why this exists: TRL trains on the checkpoint's native class
+    (Qwen3_5ForConditionalGeneration), where the text layers live under
+    `model.language_model.layers`. This wrapper loads AutoModelForCausalLM, where
+    the same layers live under `model.layers`. The weights are identical; only
+    the path differs. PEFT matches by name and, on a mismatch, only WARNS and
+    leaves every LoRA matrix at its zero init — i.e. it silently runs the base
+    model. So we fix the names here and the caller refuses to run on any miss.
+    """
+    out = {}
+    for key, value in saved.items():
+        if key not in expected:
+            for old, new in ((".language_model.", "."), (".model.layers.", ".model.language_model.layers.")):
+                candidate = key.replace(old, new, 1)
+                if candidate in expected:
+                    key = candidate
+                    break
+        out[key] = value
+    return out
+
+
+def _load_adapter(model, adapter_path: str):
+    """Attach a LoRA adapter and FAIL (not warn) unless every weight was loaded."""
+    import os
+
+    from peft import PeftConfig, PeftModel
+    from peft.utils import get_peft_model_state_dict, set_peft_model_state_dict
+    from safetensors.torch import load_file
+
+    config = PeftConfig.from_pretrained(adapter_path)
+    config.inference_mode = True
+    peft_model = PeftModel(model, config)
+
+    # Names the freshly built adapter expects, in the on-disk format (no adapter name).
+    expected = set(get_peft_model_state_dict(peft_model).keys())
+    saved = load_file(os.path.join(adapter_path, "adapter_model.safetensors"))
+    remapped = remap_adapter_keys(saved, expected)
+
+    missing = expected - set(remapped)
+    unexpected = set(remapped) - expected
+    if missing or unexpected:
+        raise RuntimeError(
+            f"adapter at {adapter_path} does not match the model: "
+            f"{len(missing)} weights missing, {len(unexpected)} unexpected "
+            f"(e.g. {sorted(missing or unexpected)[0]}). Refusing to run — "
+            "the result would be the base model, not the adapter."
+        )
+    set_peft_model_state_dict(peft_model, remapped)
+    return peft_model
+
+
 class QwenGenerationOutput(NamedTuple):
     """Result of one QwenModel.generate() call."""
 
@@ -120,9 +173,7 @@ class QwenModel:
         # the base model it was trained against.
         self.adapter_path = adapter_path
         if adapter_path is not None:
-            from peft import PeftModel
-
-            self.model = PeftModel.from_pretrained(self.model, adapter_path)
+            self.model = _load_adapter(self.model, adapter_path)
 
         # eval() disables dropout — required for deterministic greedy decoding.
         # Applied last so it covers the adapter layers too.
