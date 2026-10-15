@@ -51,8 +51,12 @@ def generate_chat_batch(
     cfg: ValidationBlock,
     enable_thinking: bool,
     max_new_tokens: int,
+    stopping_criteria=None,
 ) -> list[Sample]:
     """Sample one answer per prompt, batched, in the eval pipeline's input format.
+
+    `stopping_criteria` (optional) is passed straight to generate(); used by the
+    thinking length study to report progress and save each answer as it ends.
 
     Mirrors models/qwen.py: one user message, generation prompt, the same
     `enable_thinking` switch and the same presence-penalty processor. The
@@ -98,6 +102,9 @@ def generate_chat_batch(
                     # Gradient checkpointing can leave use_cache off on the model
                     # config; without the cache, generation is quadratic in length.
                     use_cache=True,
+                    # Optional per-step hook (progress, saving answers as they
+                    # finish). It only observes; it never stops generation early.
+                    stopping_criteria=stopping_criteria,
                 )
             for row in out[:, prompt_len:]:
                 ids = row.tolist()
