@@ -52,6 +52,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from rlforge.extract.extractor import extract_code
+
+# End of the reasoning block in thinking mode (see VerifierReward(thinking=True)).
+THINK_END = "</think>"
 from rlforge.sandbox import make_sandbox
 from rlforge.sandbox.base import SandboxConfig
 from rlforge.schema.task import CodeTask
@@ -95,6 +98,7 @@ class VerifierReward:
         max_workers: int = 8,
         execution_log_path: str | Path | None = None,
         verbose: bool = False,
+        thinking: bool = False,
     ) -> None:
         """
         Args:
@@ -110,6 +114,13 @@ class VerifierReward:
                 Kept as a config knob rather than absent code so enabling it is a
                 one-number change and the two runs differ by exactly one variable.
             max_workers: threads used to grade one batch.
+            thinking: True for thinking-mode completions. With enable_thinking the
+                chat template ends the PROMPT with "<think>\\n", so a completion
+                is "reasoning</think>\\n\\nanswer" with no opening tag, and the
+                extractor's <think>...</think> stripping never matches: a code block
+                written while reasoning would be graded as the answer. So only the
+                text after the first "</think>" is graded, and a completion without
+                one (cut off mid-reasoning) is a failure of type "no_answer".
         """
         if max_workers < 1:
             raise ValueError(f"max_workers must be >= 1, got {max_workers}")
@@ -131,6 +142,7 @@ class VerifierReward:
         self.correctness_weight = correctness_weight
         self.length_weight = length_weight
         self.max_workers = max_workers
+        self.thinking = thinking
         # Print a per-task breakdown after each graded batch. On for real runs: TRL's
         # progress bar only advances when a whole optimizer step completes, which here
         # means ~23 minutes of total silence per step. Off by default so the unit
@@ -328,6 +340,11 @@ class VerifierReward:
             "stderr": "",
             "completion_chars": len(completion),
         }
+        if self.thinking:
+            if THINK_END not in completion:
+                rec["failure_type"] = "no_answer"
+                return rec
+            completion = completion.split(THINK_END, 1)[1]
         try:
             res = extract_code(completion)
             rec["extraction_status"] = res.status

@@ -92,6 +92,11 @@ def main() -> None:
     # presence_penalty 1.5 (model card: 0-2 reduces endless repetitions).
     ap.add_argument("--temperature", type=float, default=0.6)
     ap.add_argument("--presence-penalty", type=float, default=0.0)
+    # The cap must be chosen WITHOUT the test set, so the test split is refused
+    # unless asked for explicitly: only for the one-time untrained baseline score
+    # on test, with settings and cap already fixed on validation.
+    ap.add_argument("--allow-test", action="store_true",
+                    help="allow the test split (baseline score only, never for choosing settings)")
     ap.add_argument("--limit", type=int, default=0, help="only the first N tasks (quick tests)")
     ap.add_argument("--tag", default="", help="suffix for the output folder name")
     ap.add_argument("--gpu-memory-utilization", type=float, default=0.5,
@@ -106,7 +111,7 @@ def main() -> None:
     from vllm import LLM, SamplingParams  # imported late: only the vLLM env has it
 
     split_ids = json.load(open(args.split))
-    if "test" in Path(args.split).name:
+    if "test" in Path(args.split).name and not args.allow_test:
         sys.exit("refusing to run on the test split: the cap must be chosen without it")
     tasks = {t.task_id: t for t in load_tasks(args.tasks_file) if t.task_id in set(split_ids)}
     ids = sorted(tasks)[: args.limit or None]

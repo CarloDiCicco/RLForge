@@ -61,6 +61,13 @@ class RewardConfigBlock(BaseModel):
     # Grading is subprocess-bound (~1.7s per completion on real LeetCode suites),
     # so threads overlap it with nothing lost; 8 matches num_generations.
     max_workers: int = Field(default=8, ge=1)
+    # Soft overlong penalty (DAPO eq. 13, trl.rewards.get_soft_overlong_punishment):
+    # 0 up to (cap - overlong_buffer) tokens, then a linear ramp down to -1 at the
+    # cap, added to the reward with weight overlong_weight. Teaches the model to
+    # finish before the cap instead of only counting a cut-off as a failure.
+    # 0 = off.
+    overlong_buffer: int = Field(default=0, ge=0)
+    overlong_weight: float = Field(default=1.0, ge=0.0)
 
 
 class GRPOBlock(BaseModel):
@@ -79,6 +86,13 @@ class GRPOBlock(BaseModel):
     temperature: float = Field(default=1.0, gt=0.0)
     top_p: float = Field(default=1.0, gt=0.0, le=1.0)
     top_k: int = Field(default=0, ge=0)
+    min_p: float = Field(default=0.0, ge=0.0, lt=1.0)
+    # Flat penalty on tokens already generated in this answer (Qwen's card: 0-2
+    # "to reduce endless repetitions"). Thinking-mode sweep 2026-10-15: at
+    # temperature 0.6, 1.5 took the untrained pass rate from 47% to 70% and the
+    # cut-off share from 48% to 20%. Only vLLM applies it (HF generate() has no
+    # such option), so a non-zero value requires use_vllm (checked below).
+    presence_penalty: float = Field(default=0.0, ge=0.0, le=2.0)
     # Matches the baselines, so a rollout is the same length budget as a
     # benchmark generation and truncation rates are comparable across both.
     max_completion_length: int = Field(default=2048, ge=1)
@@ -103,6 +117,41 @@ class GRPOBlock(BaseModel):
     # as a negative teaches the model that its (possibly correct) approach was
     # bad. Critical here: 21.6% of LeetCode baseline generations truncate.
     mask_truncated_completions: bool = Field(default=True)
+
+    # ── generation engine ─────────────────────────────────────────────────────
+    # vLLM "colocate": the engine lives in the training process and shares the
+    # GPU. ~10x faster than HF generate() for long thinking answers on this
+    # machine (length study 2026-10-14), because finished answers free their slot
+    # at once and per-token cost does not grow with length.
+    use_vllm: bool = Field(default=False)
+    # Share of the 121 GB unified memory vLLM reserves (weights + answer cache).
+    # Whatever it does not take is left to the trainer (logits, activations).
+    vllm_gpu_memory_utilization: float = Field(default=0.3, gt=0.0, lt=1.0)
+    # Put vLLM to sleep (free its memory) during the optimizer step; costs a
+    # reload per step, buys the trainer the engine's memory.
+    vllm_enable_sleep_mode: bool = Field(default=False)
+    # Correct for vLLM's sampling probabilities differing from the trainer's
+    # (TRL default on). With a presence penalty the two differ by design: vLLM
+    # records probabilities AFTER the penalty, the trainer recomputes them
+    # without it. The smoke test must measure how large that gap is.
+    vllm_importance_sampling_correction: bool = Field(default=True)
+    # How the correction is applied. TRL's default "sequence_mask" multiplies the
+    # per-token gap over the WHOLE answer and drops the answer if the product
+    # leaves [?, 3]. Over a ~14k-token thinking answer that product explodes, and
+    # the 32k smoke test (2026-10-15) dropped EVERY answer (ratio 0, loss 0).
+    # "token_truncate" corrects each token separately, clipped at 3 (truncated
+    # importance sampling), which stays usable at any length.
+    vllm_importance_sampling_mode: Literal[
+        "sequence_mask", "sequence_truncate", "token_mask", "token_truncate"
+    ] = Field(default="sequence_mask")
+    # Fused, chunked loss (Liger): never builds the full logits tensor
+    # (248k vocabulary x answer length), the main memory cost of long answers.
+    use_liger_kernel: bool = Field(default=False)
+    # Compute per-token log-probs N answer positions at a time instead of building
+    # the full (length x 248k vocabulary) logits; see train/chunked_logps.py.
+    # Needed for long answers: one 32k answer's full logits are ~30 GB.
+    # 0 = TRL's original implementation.
+    logits_chunk_size: int = Field(default=0, ge=0)
 
     # ── optimization ──────────────────────────────────────────────────────────
     # The default 1e-6 is TRL's, tuned for FULL fine-tuning. With LoRA it moved
@@ -228,6 +277,7 @@ class ValidationBlock(BaseModel):
     top_p: float = Field(default=0.8, gt=0.0, le=1.0)
     top_k: int = Field(default=20, ge=0)
     presence_penalty: float = Field(default=1.5, ge=0.0)
+    min_p: float = Field(default=0.0, ge=0.0, lt=1.0)
     # Fixed across probes on purpose: every checkpoint is sampled with the same
     # random stream, so differences between probes come from the weights.
     seed: int = Field(default=1234, ge=0)
@@ -325,6 +375,17 @@ class GRPOExperimentConfig(BaseModel):
                 f"{g.num_generations} generations / "
                 f"{g.per_device_train_batch_size} micro-batch). Set one or the "
                 "other, not both."
+            )
+
+        if g.presence_penalty > 0.0 and not g.use_vllm:
+            raise ValueError(
+                "grpo.presence_penalty > 0 requires grpo.use_vllm: HF generate() has no "
+                "presence penalty and TRL would silently ignore it"
+            )
+        if self.reward.overlong_buffer >= g.max_completion_length:
+            raise ValueError(
+                f"reward.overlong_buffer ({self.reward.overlong_buffer}) must be smaller "
+                f"than grpo.max_completion_length ({g.max_completion_length})"
             )
 
         # Generation batch must hold whole rollout groups, or a group would be

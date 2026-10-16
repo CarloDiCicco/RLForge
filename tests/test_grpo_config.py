@@ -291,3 +291,31 @@ def test_lr2e5_run_differs_from_run12_only_in_lr():
     assert (r12.max_train_tasks, r12.train_split, r12.model_revision, r12.enable_thinking) == \
         (r2.max_train_tasks, r2.train_split, r2.model_revision, r2.enable_thinking)
     assert (r2.grpo.learning_rate, r2.grpo.lr_scheduler_type) == (2e-5, "constant")
+
+
+# ── thinking-mode / vLLM options ──────────────────────────────────────────────
+
+
+def test_presence_penalty_requires_vllm():
+    # HF generate() has no presence penalty: TRL would silently drop it.
+    with pytest.raises(ValueError, match="requires grpo.use_vllm"):
+        GRPOExperimentConfig.model_validate(_minimal(grpo={"presence_penalty": 1.5}))
+    cfg = GRPOExperimentConfig.model_validate(
+        _minimal(grpo={"presence_penalty": 1.5, "use_vllm": True}))
+    assert cfg.grpo.presence_penalty == 1.5
+
+
+def test_overlong_buffer_must_fit_under_the_cap():
+    with pytest.raises(ValueError, match="overlong_buffer"):
+        GRPOExperimentConfig.model_validate(
+            _minimal(grpo={"max_completion_length": 4096}, reward={"overlong_buffer": 4096}))
+    cfg = GRPOExperimentConfig.model_validate(
+        _minimal(grpo={"max_completion_length": 4096}, reward={"overlong_buffer": 1024}))
+    assert cfg.reward.overlong_buffer == 1024
+
+
+def test_new_options_default_to_the_previous_behaviour():
+    # Old configs must load and train exactly as before.
+    g = GRPOExperimentConfig.model_validate(_minimal()).grpo
+    assert (g.use_vllm, g.presence_penalty, g.min_p, g.use_liger_kernel) == (False, 0.0, 0.0, False)
+    assert GRPOExperimentConfig.model_validate(_minimal()).reward.overlong_buffer == 0

@@ -119,6 +119,65 @@ def generate_chat_batch(
     return samples
 
 
+def make_vllm_generate_fn(get_trainer, cfg: ValidationBlock, *, enable_thinking: bool,
+                          max_new_tokens: int) -> GenerateFn:
+    """Probe generation on the trainer's own colocated vLLM engine.
+
+    Why: at thinking-mode lengths (tens of thousands of tokens) HF generate() takes
+    hours per probe, vLLM about ten times less (length study 2026-10-14). Reusing
+    the trainer's engine costs no extra memory.
+
+    Correctness points, each easy to get silently wrong:
+      - The engine must hold the CURRENT policy. TRL pushes weights into vLLM only
+        when it generates rollouts, i.e. at the START of a step, so at the end of a
+        step vLLM still holds the weights from before that step's update. The
+        weights are pushed here first (and always after a sleep, which discards
+        them).
+      - Same seed scheme in every probe (seed + 1000 * round + task index), so
+        sampling noise is held constant across probes, as in the HF path.
+      - Sleep mode is restored afterwards, so the training loop finds the engine
+        in the state it left it.
+    """
+    from vllm import SamplingParams  # only importable in the vLLM environment
+
+    calls = {"n": 0}
+
+    def generate(model, prompts: list[str]) -> list[Sample]:  # noqa: ANN001
+        trainer = get_trainer()
+        vg = trainer.vllm_generation
+        step = trainer.state.global_step
+        if vg._llm_weights_sleeping or trainer._last_loaded_step != step:
+            vg.sync_weights()
+            trainer._last_loaded_step = step
+        if vg.enable_sleep_mode:
+            vg.llm.wake_up(tags=["kv_cache"])
+        rnd = calls["n"] % cfg.samples_per_task
+        calls["n"] += 1
+        try:
+            params = [
+                SamplingParams(
+                    max_tokens=max_new_tokens, temperature=cfg.temperature, top_p=cfg.top_p,
+                    top_k=cfg.top_k, min_p=cfg.min_p, presence_penalty=cfg.presence_penalty,
+                    seed=cfg.seed + 1000 * rnd + i,
+                )
+                for i in range(len(prompts))
+            ]
+            outputs = vg.llm.chat(
+                [[{"role": "user", "content": p}] for p in prompts], params,
+                chat_template_kwargs={"enable_thinking": enable_thinking}, use_tqdm=False,
+            )
+        finally:
+            if vg.enable_sleep_mode:
+                vg.llm.sleep(level=2)
+                vg._llm_weights_sleeping = True
+        return [
+            (o.outputs[0].text, len(o.outputs[0].token_ids), o.outputs[0].finish_reason == "length")
+            for o in outputs
+        ]
+
+    return generate
+
+
 def summarize(records: list[dict], samples_per_task: int) -> dict[str, float]:
     """Aggregate one probe's per-answer records into the logged numbers."""
     n = len(records)
@@ -136,6 +195,8 @@ def summarize(records: list[dict], samples_per_task: int) -> dict[str, float]:
         "tasks_solved_all": sum(p == samples_per_task for p in passes) / n_tasks,
         "truncated_rate": sum(r["hit_token_cap"] for r in records) / n,
         "extraction_fail_rate": sum(r["failure_type"] == "extraction" for r in records) / n,
+        # Thinking mode: answers cut off before "</think>" (no answer at all).
+        "no_answer_rate": sum(r["failure_type"] == "no_answer" for r in records) / n,
         "mean_completion_tokens": sum(r["completion_tokens"] for r in records) / n,
     }
 

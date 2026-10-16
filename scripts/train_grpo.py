@@ -13,11 +13,16 @@ scores each by ACTUALLY EXECUTING it against the task's hidden tests
 adapter. No reward model, no human labels — the reward is the same verifier that
 produced the baseline pass@1 numbers, which is what makes the delta meaningful.
 
-Generation is plain HF `generate` (no vLLM). That is deliberate: vLLM 0.29 pulls
-generic torch 2.13.0 and would displace the pinned `2.12.1+cu130` build the three
-baselines ran on, breaking their reproducibility in this environment. Measured
-batched throughput here is ~145 tok/s at batch 16 (vs 16 tok/s at batch 1), which
-is enough — see RESEARCH_LOG.
+Generation engine (`grpo.use_vllm`):
+  - false: plain HF `generate`, in the main environment (.venv, torch 2.12.1).
+    Fine for short non-thinking answers (~145 tok/s at batch 16).
+  - true: vLLM "colocate" (the engine lives in this process and shares the GPU).
+    Required for thinking mode: ~10x faster on long answers (RESEARCH_LOG
+    2026-10-14). vLLM needs torch 2.13, so it runs ONLY in the separate
+    environment ~/data/venvs/vllm-test; the main environment stays untouched.
+
+Thinking mode (`enable_thinking: true`): the reward and the validation probe grade
+only the text after "</think>"; an answer with no "</think>" is a failure.
 """
 
 from __future__ import annotations
@@ -256,13 +261,14 @@ def build_validation_probe(cfg, tasks: dict, tokenizer, run_dir: Path) -> Valida
         {tid: tasks[tid] for tid in val_ids},
         cfg.sandbox_config,
         max_workers=cfg.reward.max_workers,
+        thinking=cfg.enable_thinking,
     )
     v = cfg.validation
     print(f"[train_grpo] validation probe: {len(val_ids)} tasks x {v.samples_per_task} "
           f"answers, at step 0, every {v.every_steps} steps and at the end "
           f"(sampling {v.temperature}/{v.top_p}/{v.top_k}, presence penalty "
           f"{v.presence_penalty}, seed {v.seed})")
-    return ValidationProbe(
+    probe = ValidationProbe(
         prompts=prompts,
         grader=grader,
         tokenizer=tokenizer,
@@ -271,6 +277,16 @@ def build_validation_probe(cfg, tasks: dict, tokenizer, run_dir: Path) -> Valida
         max_new_tokens=cfg.grpo.max_completion_length,
         out_dir=run_dir,
     )
+    if cfg.grpo.use_vllm:
+        # Same engine as the rollouts (HF generate would take hours per probe at
+        # thinking lengths). probe.trainer is set once the trainer exists.
+        from rlforge.train.val_probe import make_vllm_generate_fn
+        probe._generate = make_vllm_generate_fn(
+            lambda: probe.trainer, v, enable_thinking=cfg.enable_thinking,
+            max_new_tokens=cfg.grpo.max_completion_length,
+        )
+        print("[train_grpo] validation probe generates with the trainer's vLLM engine")
+    return probe
 
 
 def main(config_path: str, resume_from: str | None = None) -> None:
@@ -328,6 +344,7 @@ def _train(cfg, run_dir: Path, resume_from: str | None = None) -> None:
         # ~23 minutes one optimizer step takes, because TRL's progress bar only
         # advances on completed steps.
         verbose=True,
+        thinking=cfg.enable_thinking,
     )
     print(f"[train_grpo] reward: correctness={cfg.reward.correctness_weight} "
           f"length={cfg.reward.length_weight} "
@@ -347,16 +364,52 @@ def _train(cfg, run_dir: Path, resume_from: str | None = None) -> None:
           f"backprop {cfg.grpo.per_device_train_batch_size} at a time x "
           f"{cfg.grpo.gradient_accumulation_steps} accumulation steps")
 
+    # Pin the model files for vLLM too. TRL starts vLLM from `model.name_or_path`
+    # WITHOUT a revision, so with a hub id it would load whatever the repo holds
+    # today (config, tokenizer, chat template), not the pinned snapshot the
+    # baselines used. A local snapshot path carries the pin with it.
+    model_source = cfg.model_id
+    if cfg.grpo.use_vllm:
+        from huggingface_hub import snapshot_download
+        model_source = snapshot_download(cfg.model_id, revision=cfg.model_revision)
+        print(f"[train_grpo] vLLM colocate, memory share {cfg.grpo.vllm_gpu_memory_utilization}, "
+              f"sleep mode {cfg.grpo.vllm_enable_sleep_mode}; model files {model_source}")
+
+    # Extra reward terms. The soft overlong penalty is TRL's implementation of
+    # DAPO eq. 13 (0 until cap - buffer, then down to -1 at the cap).
+    reward_funcs = [reward]
+    reward_weights = [1.0]
+    if cfg.reward.overlong_buffer > 0:
+        from trl.rewards import get_soft_overlong_punishment
+        reward_funcs.append(get_soft_overlong_punishment(
+            cfg.grpo.max_completion_length, cfg.reward.overlong_buffer))
+        reward_weights.append(cfg.reward.overlong_weight)
+        print(f"[train_grpo] soft overlong penalty: last {cfg.reward.overlong_buffer} tokens "
+              f"before the {cfg.grpo.max_completion_length} cap, weight {cfg.reward.overlong_weight}")
+
+    # Presence penalty: vLLM SamplingParams only (validated in grpo_config.py).
+    generation_kwargs = (
+        {"presence_penalty": cfg.grpo.presence_penalty} if cfg.grpo.presence_penalty > 0 else None
+    )
+
     args = GRPOConfig(
         output_dir=str(run_dir),
         # bfloat16 EXPLICITLY: TRL's model loader defaults to float32 when dtype is
         # unset, which would double the weight memory for no benefit and diverge
         # from the bf16 the baselines were generated in.
-        model_init_kwargs={"dtype": "bfloat16", "revision": cfg.model_revision},
+        # With vLLM the model comes from the pinned local snapshot (see above), so
+        # no revision is passed; otherwise the hub id plus the pinned revision.
+        model_init_kwargs=(
+            {"dtype": "bfloat16"} if cfg.grpo.use_vllm
+            else {"dtype": "bfloat16", "revision": cfg.model_revision}
+        ),
         # rollout sampling — TRL defaults, not the benchmark's; see grpo_config.py
         temperature=cfg.grpo.temperature,
         top_p=cfg.grpo.top_p,
         top_k=cfg.grpo.top_k,
+        min_p=cfg.grpo.min_p,
+        generation_kwargs=generation_kwargs,
+        reward_weights=reward_weights,
         max_completion_length=cfg.grpo.max_completion_length,
         # Same thinking switch the eval pipeline passes to apply_chat_template.
         chat_template_kwargs={"enable_thinking": cfg.enable_thinking},
@@ -379,8 +432,16 @@ def _train(cfg, run_dir: Path, resume_from: str | None = None) -> None:
         gradient_checkpointing=cfg.grpo.gradient_checkpointing,
         bf16=True,
         seed=cfg.seed,
-        # generation stays in-process; see the module docstring on vLLM
-        use_vllm=False,
+        # generation engine; see the module docstring
+        use_vllm=cfg.grpo.use_vllm,
+        vllm_mode="colocate",
+        vllm_gpu_memory_utilization=cfg.grpo.vllm_gpu_memory_utilization,
+        vllm_enable_sleep_mode=cfg.grpo.vllm_enable_sleep_mode,
+        # prompt (< 2k tokens for these tasks) + the full answer
+        vllm_max_model_length=cfg.grpo.max_completion_length + 2048,
+        vllm_importance_sampling_correction=cfg.grpo.vllm_importance_sampling_correction,
+        vllm_importance_sampling_mode=cfg.grpo.vllm_importance_sampling_mode,
+        use_liger_kernel=cfg.grpo.use_liger_kernel,
         # logging
         report_to=cfg.grpo.report_to,
         logging_steps=cfg.grpo.logging_steps,
@@ -401,9 +462,18 @@ def _train(cfg, run_dir: Path, resume_from: str | None = None) -> None:
 
     probe = build_validation_probe(cfg, tasks, tokenizer, run_dir)
 
-    trainer = GRPOTrainer(
-        model=cfg.model_id,
-        reward_funcs=reward,
+    # Sliced log-prob computation for long answers (train/chunked_logps.py).
+    trainer_cls, trainer_kwargs = GRPOTrainer, {}
+    if cfg.grpo.logits_chunk_size > 0:
+        from rlforge.train.chunked_logps import ChunkedLogpsGRPOTrainer
+        trainer_cls = ChunkedLogpsGRPOTrainer
+        trainer_kwargs = {"logits_chunk_size": cfg.grpo.logits_chunk_size}
+        print(f"[train_grpo] log-probs computed {cfg.grpo.logits_chunk_size} positions at a time")
+
+    trainer = trainer_cls(
+        **trainer_kwargs,
+        model=model_source,
+        reward_funcs=reward_funcs,
         args=args,
         train_dataset=dataset,
         processing_class=tokenizer,

@@ -473,3 +473,37 @@ def test_chat_format_completions_are_graded_like_strings():
     assert _completion_text(text) == text
     assert _completion_text([{"role": "assistant", "content": text}]) == text
     assert _completion_text(None) == ""
+
+
+# ── thinking mode ─────────────────────────────────────────────────────────────
+# With enable_thinking the prompt ends with "<think>\n", so a completion is
+# "reasoning</think>\n\nanswer". Only the answer may be graded.
+
+_GOOD = "```python\ndef add_one(x):\n    return x + 1\n```"
+_BAD = "```python\ndef add_one(x):\n    return x\n```"
+
+
+def _thinking_reward(**kw) -> VerifierReward:
+    return VerifierReward({"T/1": _task()}, SandboxConfig(backend="subprocess"), thinking=True, **kw)
+
+
+def test_thinking_grades_only_the_text_after_think_end():
+    r = _thinking_reward()
+    # A correct block inside the reasoning must NOT count; the wrong final answer does.
+    rec = r.grade("T/1", f"let me try\n{_GOOD}\nhmm no</think>\n\n{_BAD}")
+    assert rec["correctness"] == 0.0
+    # And the reverse: a wrong draft in the reasoning, correct final answer.
+    rec = r.grade("T/1", f"draft\n{_BAD}\n</think>\n\n{_GOOD}")
+    assert rec["correctness"] == 1.0
+
+
+def test_thinking_without_think_end_is_no_answer():
+    r = _thinking_reward()
+    rec = r.grade("T/1", f"still reasoning... {_GOOD} and more")
+    assert rec["correctness"] == 0.0
+    assert rec["failure_type"] == "no_answer"
+
+
+def test_non_thinking_reward_is_unchanged():
+    r = VerifierReward({"T/1": _task()}, SandboxConfig(backend="subprocess"))
+    assert r.grade("T/1", _GOOD)["correctness"] == 1.0
