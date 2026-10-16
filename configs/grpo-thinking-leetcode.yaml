@@ -1,0 +1,112 @@
+# DRAFT — SERIOUS RUN #2: GRPO on Qwen3.5-4B in THINKING mode, LiveCodeBench-LeetCode.
+#
+# Decisions (RESEARCH_LOG 2026-10-14/15/16):
+#   - thinking mode. TRAINING answers: temperature 1.0, top_p 0.95, top_k 20,
+#     min_p 0, NO presence penalty (option B, decided 2026-10-16): the model
+#     learns from answers it wrote itself (on-policy, as DAPO / DeepSeek-R1 and
+#     our run #1), and healing the loops is left to the reward, which makes it
+#     measurable. Untrained at this setting (val): 58% pass, 40% cut off.
+#   - EVALUATION, both settings, trained vs untrained:
+#     PRIMARY = the training setting (same decoding before and after training:
+#     the clean measure of what RL changed in the policy);
+#     SECONDARY = temperature 0.6 + presence penalty 1.5, the "serving" setting
+#     (Qwen's recommended, best in the sweep: untrained 70% pass, 20% cut off).
+#     The validation probe below uses the TRAINING setting, so the curve shows
+#     the loops healing step by step.
+#   - cap 32768: 24k cut off 25% of the smoke test's answers and lost a task that
+#     32k solved 5/8; 32k fits in memory (smoke peak 74 GB of 121).
+#   - vLLM colocate generation (~10x faster than HF on long answers).
+#   - correction for the vLLM/trainer gap PER TOKEN (token_truncate): the default
+#     per-answer correction dropped every answer in the 32k smoke test. Without
+#     the penalty the gap is only numerical, so this is plain truncated
+#     importance sampling.
+#   - cut-off = failure (reward 0, not masked): the only length pressure in this
+#     run. NO soft overlong penalty (decided 2026-10-16): the 4k DAPO zone would
+#     dock ~8% of correct untrained answers (those ending at 28-32k), and a
+#     cut-off already scores 0. Added later only if the probe's cut-off rate
+#     does not fall.
+#   - TRAIN ON MIXED TASKS ONLY (data/splits/lcb_leetcode_v2_train_mixed.json, from
+#     scripts/select_mixed_tasks.py): in the smoke tests 7 of 8 task groups were
+#     all-pass and taught nothing.
+#
+# TO FILL after the task filter: train_split count, max_steps, save_steps,
+# validation every_steps. Measured: ~65-90 min per step at 4 tasks x 8 answers;
+# expect ~2-3 h per step at 8 tasks x 8.
+#
+# Usage (vLLM environment, repo root, inside tmux):
+#   ~/data/venvs/vllm-test/bin/python scripts/train_grpo.py configs/grpo-thinking-leetcode.yaml
+
+experiment_id: grpo-thinking-leetcode
+seed: 0
+model_id: Qwen/Qwen3.5-4B
+model_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+enable_thinking: true
+
+tasks_file: data/livecodebench_leetcode.jsonl
+train_split: data/splits/lcb_leetcode_v2_train_mixed.json   # written by the task filter
+eval_split: data/splits/lcb_leetcode_v2_test.json            # provenance only, never read
+
+validation:
+  split: data/splits/lcb_leetcode_v2_val.json
+  every_steps: 6          # TO FILL: ~3-4 probes over the run
+  # 44 x 2 = 88 answers, ~2 h per probe at 32k on vLLM.
+  # TRAINING setting (see header): the probe tracks loop healing.
+  samples_per_task: 2
+  batch_size: 44
+  temperature: 1.0
+  top_p: 0.95
+  top_k: 20
+  min_p: 0.0
+  presence_penalty: 0.0
+  seed: 1234
+
+out_dir: runs/train
+
+lora:
+  r: 32
+  lora_alpha: 64
+  lora_dropout: 0.0
+  target_modules: [q_proj, k_proj, v_proj, o_proj, in_proj_qkv, in_proj_z, in_proj_a,
+                   in_proj_b, out_proj, gate_proj, up_proj, down_proj]
+
+grpo:
+  # Option B: on-policy, no presence penalty (see header).
+  temperature: 1.0
+  top_p: 0.95
+  top_k: 20
+  min_p: 0.0
+  presence_penalty: 0.0
+  max_completion_length: 32768
+  num_generations: 8
+  beta: 0.0
+  mask_truncated_completions: false
+  learning_rate: 2.0e-5
+  lr_scheduler_type: constant_with_warmup
+  warmup_steps: 3
+  tasks_per_update: 8
+  per_device_train_batch_size: 1
+  generation_batch_size: 64
+  gradient_checkpointing: true
+  max_memory_fraction: 0.85
+  use_vllm: true
+  vllm_gpu_memory_utilization: 0.35
+  vllm_enable_sleep_mode: true
+  vllm_importance_sampling_correction: true
+  vllm_importance_sampling_mode: token_truncate
+  use_liger_kernel: true
+  logits_chunk_size: 2048
+  max_steps: 24           # TO FILL: ~2 passes over the mixed tasks
+  logging_steps: 1
+  save_steps: 6           # same steps as validation
+
+reward:
+  correctness_weight: 1.0
+  length_weight: 0.0
+  overlong_buffer: 0      # off; see header
+  max_workers: 8
+
+sandbox_config:
+  backend: bwrap
+  timeout_s: 60.0
+  cpu_s: 60
+  mem_mb: 8192

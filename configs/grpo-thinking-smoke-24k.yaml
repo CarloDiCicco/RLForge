@@ -1,0 +1,104 @@
+# SMOKE TEST for thinking-mode GRPO: does one training step fit, how long does it
+# take, and do vLLM and the trainer agree on the answers' probabilities?
+#
+# Measures (read from the run folder afterwards):
+#   - vram.jsonl: peak memory per step (vLLM's share + the trainer's)
+#   - step time (train log), split into generation and update
+#   - sampling/importance_sampling_ratio/* in TensorBoard: how far the
+#     trainer's probabilities are from vLLM's. With a presence penalty vLLM
+#     records probabilities AFTER the penalty, the trainer recomputes them
+#     without it, so a large gap here is expected and must be looked at.
+#   - val_summary.jsonl: the probe runs on vLLM (4 tasks, 1 answer) at steps 0, 2.
+#
+# Smaller than the serious run on purpose: 4 tasks per update (32 answers) instead
+# of 8, 2 steps. Memory does not depend on the number of tasks per update (answers
+# are back-propagated one at a time), only time does, so the peak measured here is
+# the serious run's peak; step time scales ~2x for 8 tasks.
+#
+# Settings = the thinking-mode sweep's best (RESEARCH_LOG 2026-10-15): temperature
+# 0.6, top_p 0.95, top_k 20, min_p 0, presence penalty 1.5. Same for validation.
+#
+# Usage (vLLM environment, from the repo root, inside tmux):
+#   ~/data/venvs/vllm-test/bin/python scripts/train_grpo.py configs/grpo-thinking-smoke-24k.yaml
+
+experiment_id: grpo-thinking-smoke-24k
+seed: 0
+model_id: Qwen/Qwen3.5-4B
+model_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+enable_thinking: true
+
+tasks_file: data/livecodebench_leetcode.jsonl
+train_split: data/splits/lcb_leetcode_v2_train.json
+eval_split: data/splits/lcb_leetcode_v2_test.json
+max_val_tasks: 4
+
+validation:
+  split: data/splits/lcb_leetcode_v2_val.json
+  every_steps: 2
+  samples_per_task: 1
+  batch_size: 4
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 20
+  min_p: 0.0
+  presence_penalty: 1.5
+  seed: 1234
+
+out_dir: runs/train
+
+lora:
+  r: 32
+  lora_alpha: 64
+  lora_dropout: 0.0
+  target_modules: [q_proj, k_proj, v_proj, o_proj, in_proj_qkv, in_proj_z, in_proj_a,
+                   in_proj_b, out_proj, gate_proj, up_proj, down_proj]
+
+grpo:
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 20
+  min_p: 0.0
+  presence_penalty: 1.5
+  max_completion_length: 24576
+  num_generations: 8
+  beta: 0.0
+  # Cut-off = failure (reward 0), not ignored: half the untrained answers were
+  # loops that never end; masking them would hide exactly what must be unlearned.
+  mask_truncated_completions: false
+  learning_rate: 2.0e-5
+  lr_scheduler_type: constant_with_warmup
+  warmup_steps: 5
+  tasks_per_update: 4
+  # One answer at a time through the loss: a 32k-token answer is the memory unit.
+  per_device_train_batch_size: 1
+  # All 32 answers of a step generated in one vLLM call (whole groups).
+  generation_batch_size: 32
+  gradient_checkpointing: true
+  max_memory_fraction: 0.85
+  use_vllm: true
+  vllm_gpu_memory_utilization: 0.35
+  vllm_enable_sleep_mode: true
+  vllm_importance_sampling_correction: true
+  # Per token, not per answer: per answer dropped every 14k-token answer in the
+  # 32k smoke test (ratio 0, loss 0).
+  vllm_importance_sampling_mode: token_truncate
+  use_liger_kernel: true
+  # One 32k answer's full logits are ~30 GB (OOM 2026-10-15); slice them.
+  logits_chunk_size: 2048
+  max_steps: 2
+  logging_steps: 1
+  save_steps: 1000
+
+reward:
+  correctness_weight: 1.0
+  length_weight: 0.0
+  # Soft penalty over the last 4k tokens before the cap (DAPO used 4k on 20k).
+  overlong_buffer: 4096
+  overlong_weight: 1.0
+  max_workers: 8
+
+sandbox_config:
+  backend: bwrap
+  timeout_s: 60.0
+  cpu_s: 60
+  mem_mb: 8192
