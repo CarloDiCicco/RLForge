@@ -6,7 +6,7 @@ reward, so it teaches nothing and only costs generation and update time. In the
 thinking-mode smoke test (2026-10-15/16) 7 of 8 task groups were all-pass.
 
 Input: a length-study folder made on the TRAIN split, e.g.
-    ~/data/venvs/vllm-test/bin/python scripts/thinking_length_study_vllm.py \
+    .venv/bin/python scripts/thinking_length_study_vllm.py \
         --split data/splits/lcb_leetcode_v2_train.json --rounds 4 \
         --max-new-tokens <cap> --temperature 0.6 --presence-penalty 1.5 --tag train-filter
 Output: a split file with the task ids whose pass count is strictly between 0 and

@@ -14,12 +14,12 @@ adapter. No reward model, no human labels — the reward is the same verifier th
 produced the baseline pass@1 numbers, which is what makes the delta meaningful.
 
 Generation engine (`grpo.use_vllm`):
-  - false: plain HF `generate`, in the main environment (.venv, torch 2.12.1).
-    Fine for short non-thinking answers (~145 tok/s at batch 16).
+  - false: plain HF `generate`. Fine for short non-thinking answers.
   - true: vLLM "colocate" (the engine lives in this process and shares the GPU).
     Required for thinking mode: ~10x faster on long answers (RESEARCH_LOG
-    2026-10-14). vLLM needs torch 2.13, so it runs ONLY in the separate
-    environment ~/data/venvs/vllm-test; the main environment stays untouched.
+    2026-10-14). vLLM is the default engine since 2026-10-16: the project's
+    .venv runs torch 2.13 + vLLM 0.31. The pre-vLLM environment (torch 2.12.1,
+    used by run #1 and the non-thinking baselines) is kept as .venv-torch212.
 
 Thinking mode (`enable_thinking: true`): the reward and the validation probe grade
 only the text after "</think>"; an answer with no "</think>" is a failure.
@@ -488,6 +488,19 @@ def _train(cfg, run_dir: Path, resume_from: str | None = None) -> None:
     )
     if probe is not None:
         probe.trainer = trainer  # for its TensorBoard writer
+
+    # Show vLLM's progress bar during rollout generation. TRL calls
+    # llm.generate(use_tqdm=False), so a step prints nothing for the ~1 h its 64
+    # thinking answers take; forcing the bar on shows answers finishing live.
+    if cfg.grpo.use_vllm:
+        llm = trainer.vllm_generation.llm
+        _generate = llm.generate
+
+        def _generate_with_progress(*a, **k):
+            k["use_tqdm"] = True
+            return _generate(*a, **k)
+
+        llm.generate = _generate_with_progress
 
     trainable = sum(p.numel() for p in trainer.model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in trainer.model.parameters())

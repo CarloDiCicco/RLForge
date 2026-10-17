@@ -19,9 +19,8 @@ What is new: EVERY answer's text is saved, including cut-off ones, plus a
 `repeated` score (share of 30-word windows seen earlier in the same answer), so
 long-but-real reasoning can be told apart from loops.
 
-Must run in the separate vLLM environment (vLLM needs torch 2.13; the training
-environment stays on 2.12):
-    ~/data/venvs/vllm-test/bin/python scripts/thinking_length_study_vllm.py \
+Runs in the project environment (.venv: torch 2.13 + vLLM 0.31):
+    .venv/bin/python scripts/thinking_length_study_vllm.py \
         --rounds 4 --max-new-tokens 32768
 """
 

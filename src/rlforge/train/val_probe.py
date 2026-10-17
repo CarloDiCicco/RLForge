@@ -164,7 +164,9 @@ def make_vllm_generate_fn(get_trainer, cfg: ValidationBlock, *, enable_thinking:
             ]
             outputs = vg.llm.chat(
                 [[{"role": "user", "content": p}] for p in prompts], params,
-                chat_template_kwargs={"enable_thinking": enable_thinking}, use_tqdm=False,
+                # Progress bar on: a probe round at thinking lengths takes ~1 h, and
+                # without it nothing is printed until the round ends.
+                chat_template_kwargs={"enable_thinking": enable_thinking}, use_tqdm=True,
             )
         finally:
             if vg.enable_sleep_mode:
@@ -300,6 +302,13 @@ class ValidationProbe(TrainerCallback):
                         self._task_ids, samples, graded, strict=True)
                 ]
                 records.extend(round_records)
+                # One line per answer, so a round can be read in the terminal log
+                # without opening val_executions.jsonl.
+                for r in round_records:
+                    print(f"[val]   {r['task_id']:10} {r['completion_tokens']:6} tok  "
+                          f"{'PASS' if r['correctness'] else 'fail'}  "
+                          f"{r['failure_type'] or ''}{'  CUT OFF' if r['hit_token_cap'] else ''}",
+                          flush=True)
                 self._append(self._exec_path, round_records)
                 n_pass = sum(r["correctness"] for r in round_records)
                 n_cut = sum(r["hit_token_cap"] for r in round_records)

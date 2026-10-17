@@ -74,3 +74,19 @@ def test_sliced_gradients_equal_trl(setup):
         grads.append([p.grad.clone() for p in model.parameters() if p.grad is not None])
     for a, b in zip(*grads, strict=True):
         torch.testing.assert_close(a, b, rtol=1e-4, atol=1e-5)
+
+
+def test_no_grad_pass_logs_entropy(setup):
+    # With the Liger loss TRL logs no entropy; the sliced no-grad pass logs it.
+    import collections
+    model, ids, mask = setup
+    t = _trainer(model, 7)
+    t._metrics = {"train": collections.defaultdict(list)}
+    with torch.no_grad():
+        _, ref_ent, _ = GRPOTrainer._get_per_token_logps_and_entropies(
+            t, model, ids, mask, 30, compute_entropy=True)
+        _, ent, _ = t._get_per_token_logps_and_entropies(model, ids, mask, 30)
+    assert ent is None  # not returned when the caller did not ask
+    logged = t._metrics["train"]["entropy"]
+    assert len(logged) == 1
+    assert abs(logged[0] - ref_ent.mean().item()) < 1e-4

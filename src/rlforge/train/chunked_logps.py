@@ -63,6 +63,15 @@ class ChunkedLogpsGRPOTrainer(GRPOTrainer):
                 compute_entropy=compute_entropy, compute_aux_loss=compute_aux_loss, **multimodal,
             )
 
+        # Entropy for LOGGING. With the Liger loss TRL's loss path returns before it
+        # computes entropy, so no "entropy" curve is logged (run #2). The no-grad
+        # pass TRL makes before each update (old log-probs) already builds each
+        # slice's logits, so entropy is computed there at no extra memory and
+        # logged under the same name TRL uses.
+        log_entropy = not torch.is_grad_enabled() and not compute_entropy
+        if log_entropy:
+            compute_entropy = True
+
         lm_head = self.accelerator.unwrap_model(model).get_output_embeddings()
         temperature = self.temperature
         batch_size = batch_size or input_ids.size(0)
@@ -99,4 +108,11 @@ class ChunkedLogpsGRPOTrainer(GRPOTrainer):
 
         logps = torch.cat(all_logps, dim=0)
         entropies = torch.cat(all_entropies, dim=0) if compute_entropy else None
+        if log_entropy:
+            # Mean over completion tokens only (padding masked out), like TRL.
+            mask = attention_mask[:, -logits_to_keep:].bool()
+            metrics = getattr(self, "_metrics", None)
+            if metrics is not None and mask.any():
+                metrics["train"]["entropy"].append(entropies[mask].float().mean().item())
+            entropies = None  # the caller did not ask for them
         return logps, entropies, None
