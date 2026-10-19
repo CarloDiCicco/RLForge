@@ -25,16 +25,18 @@
 #     dock ~8% of correct untrained answers (those ending at 28-32k), and a
 #     cut-off already scores 0. Added later only if the probe's cut-off rate
 #     does not fall.
-#   - TRAIN ON MIXED TASKS ONLY (data/splits/lcb_leetcode_v2_train_mixed.json, from
-#     scripts/select_mixed_tasks.py): in the smoke tests 7 of 8 task groups were
-#     all-pass and taught nothing.
+#   - ALL 300 training tasks, no difficulty filter (decided 2026-10-16): 300 is
+#     already small, and a task whose 8 answers all score the same only costs
+#     time (zero advantage = no gradient), it does not push the model wrong. At
+#     the training setting groups are mostly mixed anyway (test baseline round 1:
+#     59% pass, 38% cut off).
 #
-# TO FILL after the task filter: train_split count, max_steps, save_steps,
-# validation every_steps. Measured: ~65-90 min per step at 4 tasks x 8 answers;
-# expect ~2-3 h per step at 8 tasks x 8.
+# Length: 1 pass over the 300 tasks = 38 steps (8 tasks per step). Measured
+# ~1-1.5 h per step at 4 tasks x 8 answers; expect ~2-3 h per step at 8 x 8 at
+# this setting (more answers run to the cap), i.e. ~4-5 days with the probes.
 #
 # Usage (vLLM environment, repo root, inside tmux):
-#   ~/data/venvs/vllm-test/bin/python scripts/train_grpo.py configs/grpo-thinking-leetcode.yaml
+#   .venv/bin/python scripts/train_grpo.py configs/grpo-thinking-leetcode.yaml
 
 experiment_id: grpo-thinking-leetcode
 seed: 0
@@ -43,12 +45,13 @@ model_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
 enable_thinking: true
 
 tasks_file: data/livecodebench_leetcode.jsonl
-train_split: data/splits/lcb_leetcode_v2_train_mixed.json   # written by the task filter
+train_split: data/splits/lcb_leetcode_v2_train.json         # all 300 tasks
 eval_split: data/splits/lcb_leetcode_v2_test.json            # provenance only, never read
 
 validation:
   split: data/splits/lcb_leetcode_v2_val.json
-  every_steps: 6          # TO FILL: ~3-4 probes over the run
+  # probes at steps 0, 10, 20, 30 and the end (38): ~2 h each at this setting
+  every_steps: 10
   # 44 x 2 = 88 answers, ~2 h per probe at 32k on vLLM.
   # TRAINING setting (see header): the probe tracks loop healing.
   samples_per_task: 2
@@ -89,15 +92,17 @@ grpo:
   gradient_checkpointing: true
   max_memory_fraction: 0.85
   use_vllm: true
-  vllm_gpu_memory_utilization: 0.35
+  # 0.45 (smoke tests: 0.35, peak 74 GB): more answers generated at once, same
+  # results; ~86 GB expected peak, under the 111 GB cap.
+  vllm_gpu_memory_utilization: 0.45
   vllm_enable_sleep_mode: true
   vllm_importance_sampling_correction: true
   vllm_importance_sampling_mode: token_truncate
   use_liger_kernel: true
   logits_chunk_size: 2048
-  max_steps: 24           # TO FILL: ~2 passes over the mixed tasks
+  max_steps: 38           # one pass over the 300 tasks
   logging_steps: 1
-  save_steps: 6           # same steps as validation
+  save_steps: 10          # same steps as validation
 
 reward:
   correctness_weight: 1.0

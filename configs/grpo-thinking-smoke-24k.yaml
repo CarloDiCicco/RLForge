@@ -19,7 +19,7 @@
 # 0.6, top_p 0.95, top_k 20, min_p 0, presence penalty 1.5. Same for validation.
 #
 # Usage (vLLM environment, from the repo root, inside tmux):
-#   ~/data/venvs/vllm-test/bin/python scripts/train_grpo.py configs/grpo-thinking-smoke-24k.yaml
+#   .venv/bin/python scripts/train_grpo.py configs/grpo-thinking-smoke-24k.yaml
 
 experiment_id: grpo-thinking-smoke-24k
 seed: 0
