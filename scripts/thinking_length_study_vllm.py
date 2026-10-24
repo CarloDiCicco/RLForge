@@ -78,6 +78,65 @@ def curve(records: list[dict], max_cap: int) -> list[dict]:
     return rows
 
 
+def merge_adapter(adapter: Path, base_dir: Path, out_dir: Path) -> dict:
+    """Fold a LoRA adapter into the base weights: W += (alpha / r) * B @ A.
+
+    Why merge instead of vLLM's LoRA support: the adapter also covers the
+    linear-attention projections (in_proj_qkv/z/a/b, out_proj), which vLLM's LoRA
+    path may not handle for Qwen3.5. A merged copy is a plain checkpoint, so vLLM
+    loads it exactly like the untrained model. The sum is done in float32 and
+    stored back in the base dtype (bf16), as PEFT's merge does.
+    Every adapter weight must find its base weight, or the merge is refused.
+    """
+    import shutil
+
+    import torch
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+
+    cfg = json.loads((adapter / "adapter_config.json").read_text())
+    if cfg.get("use_dora") or cfg.get("use_rslora") or cfg.get("rank_pattern") or cfg.get("alpha_pattern"):
+        sys.exit("merge_adapter handles plain LoRA only")
+    scale = cfg["lora_alpha"] / cfg["r"]
+    lora = {}
+    with safe_open(str(adapter / "adapter_model.safetensors"), "pt") as f:
+        for k in f.keys():
+            lora[k] = f.get_tensor(k)
+    pairs = {}  # base weight name -> (A, B)
+    for k in lora:
+        if k.endswith(".lora_A.weight"):
+            name = k.removeprefix("base_model.model.").removesuffix(".lora_A.weight") + ".weight"
+            pairs[name] = (lora[k], lora[k.replace(".lora_A.", ".lora_B.")])
+    if 2 * len(pairs) != len(lora):
+        sys.exit(f"adapter has {len(lora)} tensors, expected 2 per module ({len(pairs)} modules)")
+
+    out_dir.mkdir(parents=True, exist_ok=False)
+    index = json.loads((base_dir / "model.safetensors.index.json").read_text())
+    done = set()
+    for shard in sorted(set(index["weight_map"].values())):
+        tensors = {}
+        with safe_open(str(base_dir / shard), "pt") as f:
+            for k in f.keys():
+                w = f.get_tensor(k)
+                if k in pairs:
+                    a, b = pairs[k]
+                    w = (w.float() + scale * (b.float() @ a.float())).to(w.dtype)
+                    done.add(k)
+                tensors[k] = w.contiguous()
+        save_file(tensors, str(out_dir / shard), metadata={"format": "pt"})
+    if done != set(pairs):
+        shutil.rmtree(out_dir)
+        sys.exit(f"{len(set(pairs) - done)} adapter modules have no base weight, e.g. "
+                 f"{sorted(set(pairs) - done)[:3]}")
+    for p in base_dir.iterdir():  # config, index, tokenizer, chat template, ...
+        if not p.name.endswith(".safetensors") and p.is_file():
+            shutil.copy(p, out_dir / p.name)
+    info = {"adapter": str(adapter), "base": str(base_dir), "modules_merged": len(done),
+            "scale": scale}
+    (out_dir / "merge_info.json").write_text(json.dumps(info, indent=2))
+    return info
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--tasks-file", default="data/livecodebench_leetcode.jsonl")
@@ -100,6 +159,10 @@ def main() -> None:
     ap.add_argument("--tag", default="", help="suffix for the output folder name")
     ap.add_argument("--gpu-memory-utilization", type=float, default=0.5,
                     help="share of the 121 GB unified memory vLLM may reserve")
+    ap.add_argument("--adapter", default="",
+                    help="LoRA adapter folder of a trained run; merged into the base weights "
+                         "(cached under --merged-dir) and evaluated instead of the untrained model")
+    ap.add_argument("--merged-dir", default=str(Path.home() / "data/cache/merged"))
     args = ap.parse_args()
 
     # vLLM compiles some GPU code on first use with `ninja`, which lives in this
@@ -132,7 +195,20 @@ def main() -> None:
     print(f"[length-study-vllm] {len(ids)} tasks x {args.rounds} rounds, cap {args.max_new_tokens}, -> {out}",
           flush=True)
 
-    llm = LLM("Qwen/Qwen3.5-4B", revision=args.revision, seed=args.seed,
+    model, revision = "Qwen/Qwen3.5-4B", args.revision
+    if args.adapter:
+        from huggingface_hub import snapshot_download
+        adapter = Path(args.adapter).resolve()
+        base_dir = Path(snapshot_download("Qwen/Qwen3.5-4B", revision=args.revision))
+        # one cached merge per adapter folder: <run>__<checkpoint>
+        merged = Path(args.merged_dir) / f"{adapter.parent.name}__{adapter.name}"
+        if not (merged / "merge_info.json").exists():
+            print(f"[length-study-vllm] merging {adapter} -> {merged}", flush=True)
+            merge_adapter(adapter, base_dir, merged)
+        meta["merge"] = json.loads((merged / "merge_info.json").read_text())
+        (out / "meta.json").write_text(json.dumps(meta, indent=2))
+        model, revision = str(merged), None
+    llm = LLM(model, revision=revision, seed=args.seed,
               gpu_memory_utilization=args.gpu_memory_utilization,
               # prompt (<1k tokens) + the full answer must fit in one sequence
               max_model_len=args.max_new_tokens + 2048)
