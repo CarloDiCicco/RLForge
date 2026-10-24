@@ -82,12 +82,12 @@ one training run with one seed, and one main benchmark.
 
 ## Running it
 
-Tested only on one DGX Spark (GB10, CUDA 13, peak ~90 GB of GPU memory). A
+Tested only on one DGX Spark. A
 fresh setup may need some manual installs. The main entry points:
 
 ```bash
 .venv/bin/python scripts/prepare_livecodebench.py        # build the dataset
-.venv/bin/python scripts/train_grpo.py configs/grpo-thinking-leetcode.yaml
+.venv/bin/python scripts/train_grpo.py configs/grpo-thinking-leetcode.yaml # train
 
 # evaluate the trained adapter on the test split
 .venv/bin/python scripts/thinking_length_study_vllm.py \
