@@ -205,7 +205,7 @@ def setup_tensorboard_dir(run_dir: Path, experiment_id: str) -> Path:
 
     Two problems with the default. HF writes events to
     `<output_dir>/runs/<date>_<hostname>`, so with `--logdir runs/train` a run shows
-    up as `20260926T151507Z-grpo-…/runs/Sep26_17-16-10_spark-aa6f`: long, and half
+    up as `20260926T151507Z-grpo-…/runs/Sep26_17-16-10_<hostname>`: long, and half
     of it is noise. And `runs/` inside a folder already under `runs/` is confusing.
 
     So events go to `<run_dir>/tb`, and a symlink `runs/tb/<MMDD-HHMM>-<experiment_id>`

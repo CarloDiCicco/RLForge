@@ -6,6 +6,8 @@ on hosts without it (the real target, the DGX, has bwrap).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from rlforge.classify.taxonomy import FailureType
@@ -71,7 +73,9 @@ def test_home_and_ssh_keys_not_visible():
 
 def test_repo_files_not_visible():
     # The repo is not bind-mounted either.
-    repo = "/home/carlo/repos/RLForge/pyproject.toml"
+    # Resolved from this file, so the check is real on any machine (a hard-coded
+    # path would pass trivially wherever the repo lives elsewhere).
+    repo = str(Path(__file__).resolve().parents[1] / "pyproject.toml")
     code = (
         "import os\n"
         "def add(a, b):\n"
