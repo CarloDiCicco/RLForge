@@ -1,5 +1,7 @@
 # RLForge
 
+> **Status: active research.** This repository is updated as experiments are completed.
+
 RLForge is a personal lab for studying
 reinforcement learning on LLMs. Training and evaluation run on a
 single NVIDIA DGX Spark. Results so far come from one training run and
