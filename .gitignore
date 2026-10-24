@@ -126,6 +126,8 @@ activemq-data/
 .env
 .envrc
 .venv
+# kept-alongside environments, e.g. .venv-torch212 (5 GB): never commit them
+.venv-*/
 env/
 venv/
 ENV/
