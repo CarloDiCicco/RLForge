@@ -22,7 +22,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 # real runs work from the repo root, where the study writes runs/eval/.
 cd "${WORKDIR:-$REPO}"
 
-PY="${PY:-$HOME/data/venvs/vllm-test/bin/python}"
+PY="${PY:-$HOME/repos/RLForge/.venv/bin/python}"
 STUDY="${STUDY:-$REPO/scripts/thinking_length_study_vllm.py}"
 ROUNDS="${ROUNDS:-2}"
 BASELINE="$REPO/runs/eval/20261014T155332Z-thinking-length-study-vllm"
