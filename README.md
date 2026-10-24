@@ -1,7 +1,7 @@
 # RLForge
 
-**Status: work in progress.** RLForge is a personal lab for studying
-reinforcement learning (RL) on LLMs. Training and evaluation run on a
+RLForge is a personal lab for studying
+reinforcement learning on LLMs. Training and evaluation run on a
 single NVIDIA DGX Spark. Results so far come from one training run and
 should be read as early findings, not final claims.
 
@@ -16,7 +16,7 @@ generate → execute in sandbox → grade → train → evaluate
 
 **Setup**
 - **Model:** Qwen3.5-4B in thinking mode, with LoRA (rank 32) on all linear layers.
-- **Algorithm:** GRPO (TRL) with DAPO-style token averaging and no KL penalty.
+- **Algorithm:** GRPO with DAPO-style token averaging and no KL penalty.
 - **Data:** 300 LeetCode training tasks from LiveCodeBench. 44 validation tasks
   were used for checks during training, and 100 test tasks were scored once,
   after training.
@@ -41,7 +41,7 @@ Qwen's suggested setting the +3 points are within noise.
 | Training setting | Before RL | After RL |
 |---|---|---|
 | Answers cut off at 32k | 35.5% | 0% |
-| Average answer length | 22.2k tokens | 11.6k tokens |
+| Average answer length (tokens) | 22.2k | 11.6k |
 | Pass rate within a 16k budget | 37% | 68% |
 
 **What we learned**
@@ -82,8 +82,7 @@ one training run with one seed, and one main benchmark.
 
 ## Running it
 
-Tested only on one DGX Spark. A
-fresh setup may need some manual installs. The main entry points:
+Tested only on one DGX Spark. A fresh setup may need some manual installs. The main entry points:
 
 ```bash
 .venv/bin/python scripts/prepare_livecodebench.py        # build the dataset
