@@ -31,6 +31,61 @@ from rlforge.schema.testsuite import TestSuite
 _CANDIDATE_SRC_VAR = "__RLFORGE_CANDIDATE_SRC_7f3a__"
 
 
+# Runs the compiled candidate `_code` once on one stdin text and returns what it
+# printed. SHARED, verbatim, by the reward harness below and by the gold-check
+# probe (verify/reference_verifier.py), so the check that selects training tasks
+# and the reward that trains on them cannot drift apart.
+#
+# Why byte-backed streams instead of StringIO (bug found 2026-11-14 by the run #3
+# gold check, where 10/100 known-correct TACO solutions failed EVERY test in 0.1s):
+#   - competitive code reads fast input via `sys.stdin.buffer` and writes via
+#     `sys.stdout.buffer`; StringIO has no `.buffer`, so a correct program died
+#     with AttributeError. TextIOWrapper over BytesIO has a real `.buffer`.
+#   - `exit()` / `sys.exit()` after printing is normal in contest code; it raised
+#     SystemExit out of exec and aborted the whole harness. Here it simply ends
+#     that run, like a real process exit (output so far is kept).
+# Not covered: raw fd I/O (`os.read(0)`, `os.write(1)`), which bypasses sys.*.
+#
+# exit()/sys.exit(): the sandbox preamble sets them to None (anti reward hacking:
+# in assert mode a program could exit 0 before the asserts run). That attack does
+# not exist here: SystemExit is caught per test and the output is still compared,
+# and the pass sentinel prints only after every pair. So for the duration of ONE
+# run, exit/quit/sys.exit raise SystemExit like in a real process, then the
+# nullified versions are restored. os._exit stays disabled (it would kill the
+# harness itself).
+STDIO_RUN_ONE = '''\
+import builtins as _bi
+
+def _raise_exit(*_a):
+    raise SystemExit(*_a)
+
+def _run_one(_stdin_text):
+    _old_in, _old_out = _sys.stdin, _sys.stdout
+    _old_exits = (_bi.exit, _bi.quit, _sys.exit)
+    _bi.exit = _bi.quit = _sys.exit = _raise_exit
+    _outb = _io.BytesIO()
+    _out = _io.TextIOWrapper(_outb, encoding="utf-8", write_through=True)
+    _sys.stdin = _io.TextIOWrapper(_io.BytesIO(_stdin_text.encode("utf-8")), encoding="utf-8")
+    _sys.stdout = _out
+    _got = ""
+    try:
+        exec(_code, {"__name__": "__main__"})
+    except SystemExit:
+        pass
+    finally:
+        # Read the bytes BEFORE the wrapper is released: a TextIOWrapper closes
+        # its BytesIO when garbage-collected, after which getvalue() raises.
+        try:
+            _out.flush()
+        except Exception:
+            pass
+        _got = _outb.getvalue().decode("utf-8", "replace")
+        _sys.stdin, _sys.stdout = _old_in, _old_out
+        _bi.exit, _bi.quit, _sys.exit = _old_exits
+    return _got
+'''
+
+
 def _stdin_stdout_test_code(suite: TestSuite) -> str:
     """Compile a stdin_stdout suite into a self-checking test fragment.
 
@@ -48,7 +103,7 @@ def _stdin_stdout_test_code(suite: TestSuite) -> str:
     # payloads (newlines, quotes, unicode) that eval-free `json.loads` reads back.
     pairs_literal = json.dumps(pairs)
     return f'''\
-import io as _io, sys as _sys, contextlib as _ctx, json as _json
+import io as _io, sys as _sys, json as _json
 _pairs = _json.loads({pairs_literal!r})
 _code = compile({_CANDIDATE_SRC_VAR}, "<candidate>", "exec")
 
@@ -56,22 +111,19 @@ def _norm(_s):
     _lines = [_ln.rstrip() for _ln in _s.splitlines()]
     while _lines and _lines[-1] == "":
         _lines.pop()
+    # Leading blank lines are ignored too, like real judges: measured on the
+    # run #3 pool, some expected outputs start with a stray "\\n" (data defect).
+    while _lines and _lines[0] == "":
+        _lines.pop(0)
     return "\\n".join(_lines)
 
+{STDIO_RUN_ONE}
 for _idx, (_stdin_text, _expected) in enumerate(_pairs):
-    _old_stdin = _sys.stdin
-    _sys.stdin = _io.StringIO(_stdin_text)
-    _buf = _io.StringIO()
-    try:
-        with _ctx.redirect_stdout(_buf):
-            exec(_code, {{"__name__": "__main__"}})
-    finally:
-        _sys.stdin = _old_stdin
-    _got = _norm(_buf.getvalue())
-    if _got != _norm(_expected):
+    _raw = _run_one(_stdin_text)
+    if _norm(_raw) != _norm(_expected):
         raise AssertionError(
             "IO pair %d failed: stdin=%r expected=%r got=%r"
-            % (_idx, _stdin_text, _expected, _buf.getvalue())
+            % (_idx, _stdin_text, _expected, _raw)
         )
 '''
 

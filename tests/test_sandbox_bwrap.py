@@ -101,3 +101,27 @@ def test_stdin_stdout_candidate_runs_inside_cage():
     r = _bwrap().run(bad, tc, mode="stdin_stdout")
     assert not r.passed
     assert r.failure_type == FailureType.ASSERTION
+
+
+# Regression (2026-11-14, run #3 gold check): correct contest-style programs were
+# graded as failures because the stdin/stdout harness used StringIO (no
+# `.buffer`) and the preamble's nullified exit() crashed programs that exit after
+# printing. Both must pass now, and early-exit hacks must still fail.
+_ADD_SUITE = TestSuite(kind="stdin_stdout", io_pairs=[IOPair(stdin="2 3\n", stdout="5\n"),
+                                                      IOPair(stdin="1 1\n", stdout="2\n")])
+
+
+@pytest.mark.parametrize("src", [
+    "import sys\na, b = map(int, sys.stdin.buffer.readline().split())\nprint(a + b)",
+    "import sys\na, b = map(int, input().split())\nsys.stdout.buffer.write(f'{a + b}\\n'.encode())",
+    "a, b = map(int, input().split())\nprint(a + b)\nexit()",
+    "import sys\na, b = map(int, input().split())\nprint(a + b)\nsys.exit(0)",
+])
+def test_stdio_fast_io_and_exit_pass(src):
+    r = _bwrap().run(src, suite_to_test_code(_ADD_SUITE), mode="stdin_stdout")
+    assert r.passed, r.stderr[-500:]
+
+
+@pytest.mark.parametrize("src", ["exit(0)", "import sys\nsys.exit(0)", "import os\nos._exit(0)"])
+def test_stdio_early_exit_hacks_still_fail(src):
+    assert not _bwrap().run(src, suite_to_test_code(_ADD_SUITE), mode="stdin_stdout").passed

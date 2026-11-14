@@ -71,6 +71,7 @@ from rlforge.sandbox.base import SandboxConfig
 from rlforge.sandbox.subprocess_sandbox import CANDIDATE_SRC_VAR
 from rlforge.schema.task import CodeTask
 from rlforge.schema.testsuite import TestSuite
+from rlforge.verify.compiler import STDIO_RUN_ONE  # same per-test runner as the reward
 
 # Printed by the probe immediately before the verdict payload, so the verdict can
 # be located in stdout even if the candidate program printed arbitrary text.
@@ -169,7 +170,7 @@ def _stdio_probe(suite: TestSuite, max_tests: int) -> tuple[str, int]:
     """
     pairs = [[p.stdin, p.stdout] for p in suite.io_pairs[:max_tests]]
     code = f"""\
-import io as _io, sys as _sys, contextlib as _ctx, json as _json
+import io as _io, sys as _sys, json as _json
 _pairs = _json.loads({json.dumps(pairs)!r})
 _code = compile({CANDIDATE_SRC_VAR}, "<candidate>", "exec")
 
@@ -177,23 +178,20 @@ def _norm(_s):
     _lines = [_ln.rstrip() for _ln in _s.splitlines()]
     while _lines and _lines[-1] == "":
         _lines.pop()
+    # Leading blank lines are ignored too, like real judges: measured on the
+    # run #3 pool, some expected outputs start with a stray "\\n" (data defect).
+    while _lines and _lines[0] == "":
+        _lines.pop(0)
     return "\\n".join(_lines)
 
+{STDIO_RUN_ONE}
 _ok = []
 for _idx, (_stdin_text, _expected) in enumerate(_pairs):
-    _old_stdin = _sys.stdin
-    _sys.stdin = _io.StringIO(_stdin_text)
-    _buf = _io.StringIO()
     try:
-        with _ctx.redirect_stdout(_buf):
-            exec(_code, {{"__name__": "__main__"}})
-        _got = _norm(_buf.getvalue())
-        if _got == _norm(_expected):
+        if _norm(_run_one(_stdin_text)) == _norm(_expected):
             _ok.append(_idx)
     except BaseException:
         pass
-    finally:
-        _sys.stdin = _old_stdin
 print("{_VERDICT_MARKER}" + _json.dumps(_ok))
 """
     return code, len(pairs)
