@@ -83,3 +83,16 @@ def test_unsupported_extension_raises(tmp_path):
     path.write_text("task_id,prompt\n")
     with pytest.raises(ValueError, match="Unsupported task extension"):
         load_tasks(path)
+
+
+def test_jsonl_line_separator_chars_inside_strings(tmp_path):
+    # Regression (2026-11-15): U+0085 / U+2028 inside a JSON string are legal
+    # unescaped; str.splitlines() split the record there and the load failed.
+    import json as _json
+
+    from rlforge.adapters.task_loader import _read_jsonl
+
+    rows = [{"task_id": "a", "prompt": "x\u0085y z\x1cw"}, {"task_id": "b", "prompt": "ok"}]
+    p = tmp_path / "t.jsonl"
+    p.write_text("\n".join(_json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
+    assert [r["prompt"] for r in _read_jsonl(p)] == ["x\u0085y z\x1cw", "ok"]

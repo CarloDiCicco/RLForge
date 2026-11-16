@@ -133,15 +133,36 @@ class SubprocessSandbox:
         this command inside `bwrap`."""
         return [sys.executable, str(script_path)]
 
-    def _preexec(self):
+    def _preexec(self, allow_fork: bool = False):
         """The preexec_fn applying resource limits. Overridden by BwrapSandbox
-        to skip the NPROC cap (bwrap must fork to launch the interpreter)."""
-        return _make_limit_preexec(self.config, apply_nproc=True)
+        to skip the NPROC cap (bwrap must fork to launch the interpreter).
+
+        allow_fork: the per-test runner of verify/runner.py forks one child per
+        test, so RLIMIT_NPROC=0 must not be applied to it. The other limits
+        (memory, CPU seconds, file size) still bind, and each forked child
+        inherits them."""
+        return _make_limit_preexec(self.config, apply_nproc=not allow_fork)
 
     def run(
         self, candidate_code: str, test_code: str, mode: TestKind = "assert"
     ) -> ExecutionResult:
-        script = build_script(candidate_code, test_code, mode)
+        return self.run_script(build_script(candidate_code, test_code, mode))
+
+    def run_script(
+        self,
+        script: str,
+        stdin_data: bytes | None = None,
+        *,
+        allow_fork: bool = False,
+        timeout_s: float | None = None,
+    ) -> ExecutionResult:
+        """Run an already-assembled script in the cage, optionally feeding stdin.
+
+        Used directly by verify/runner.py, which builds its own scripts (the
+        per-test runner and the function-call evaluator) so that expected outputs
+        never enter the sandbox. Pass/fail still means exit code 0 AND the pass
+        sentinel printed by the script; the caller decides what the stdout means.
+        """
         tmp_path: Path | None = None
         try:
             # Write the script to a temp file (not -c): no argv length limit, and
@@ -158,10 +179,17 @@ class SubprocessSandbox:
                     proc = subprocess.run(
                         self._command(tmp_path),
                         capture_output=True,
-                        text=True,
-                        timeout=self.config.timeout_s,
+                        # bytes in, decoded below with errors="replace": a
+                        # program printing invalid UTF-8 must not crash grading.
+                        input=stdin_data if stdin_data is not None else b"",
+                        timeout=timeout_s or self.config.timeout_s,
                         cwd=work_dir,              # isolate file I/O to a temp dir
-                        preexec_fn=self._preexec(),  # layer B (resource limits)
+                        preexec_fn=self._preexec(allow_fork),  # layer B (limits)
+                    )
+                    proc = subprocess.CompletedProcess(
+                        proc.args, proc.returncode,
+                        proc.stdout.decode("utf-8", errors="replace"),
+                        proc.stderr.decode("utf-8", errors="replace"),
                     )
                     elapsed = time.perf_counter() - start
                     return self._result_from_proc(proc, elapsed)

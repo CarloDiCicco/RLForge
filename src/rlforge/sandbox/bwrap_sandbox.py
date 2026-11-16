@@ -151,7 +151,7 @@ class BwrapSandbox(SubprocessSandbox):
                 "See RESEARCH_LOG.md for the fix, or use backend='subprocess'."
             )
 
-    def _preexec(self):
+    def _preexec(self, allow_fork: bool = False):
         """Apply resource limits but NOT the NPROC cap: the launched process is
         bwrap, which must fork to start the interpreter. AS/CPU/FSIZE still
         inherit into the caged interpreter; bwrap's PID namespace constrains

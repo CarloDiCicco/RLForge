@@ -51,7 +51,7 @@ from rlforge.sandbox.bwrap_sandbox import bwrap_usable
 from rlforge.schema.execution import ExecutionRecord, ExecutionResult
 from rlforge.schema.records import GenerationRecord
 from rlforge.schema.task import CodeTask
-from rlforge.verify.compiler import suite_to_test_code
+from rlforge.verify.runner import run_suite
 
 
 class GenOutput(NamedTuple):
@@ -255,14 +255,19 @@ def run_pipeline(
                         execution_time_s=0.0,
                     )
                 else:
-                    # suite_to_test_code raises NotImplementedError for kinds
-                    # not yet runnable (checker) — intentionally not caught
-                    # here; see verify/compiler.py. An unsupported suite must
-                    # stop the run, never be silently scored as a pass. assert
-                    # and stdin_stdout are both handled; mode=suite.kind tells
-                    # the sandbox how to assemble the candidate.
-                    test_code = suite_to_test_code(suite, task.entry_point)
-                    result = sandbox.run(res.code, test_code, mode=suite.kind)
+                    # verify/runner.run_suite is the one grader (shared with the
+                    # RL reward and the gold check); expected outputs never enter
+                    # the sandbox. It raises NotImplementedError for suite kinds
+                    # with no grader (checker): intentionally not caught, so an
+                    # unsupported suite stops the run instead of scoring a pass.
+                    sr = run_suite(sandbox, res.code, suite, allow_legacy=True)  # benchmark only
+                    result = ExecutionResult(
+                        passed=sr.passed,
+                        failure_type=sr.failure_type,
+                        stderr=sr.stderr or sr.detail,
+                        execution_time_s=sr.execution_time_s,
+                        exit_code=sr.exit_code,
+                    )
 
                 exec_record = ExecutionRecord(
                     execution_result_id=new_execution_id(sample_id, suite_name),

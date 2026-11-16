@@ -86,9 +86,10 @@ def read_records(path: Path, model_cls: Type[M]) -> list[M]:
     if not path.exists():
         return []
     records: list[M] = []
-    for line_number, line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), start=1
-    ):
+    # "\n" only, not str.splitlines(): see adapters/task_loader._read_jsonl.
+    with path.open(encoding="utf-8", newline="\n") as handle:
+        lines = list(handle)
+    for line_number, line in enumerate(lines, start=1):
         text = line.strip()
         if not text:
             continue

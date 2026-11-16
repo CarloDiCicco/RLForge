@@ -35,7 +35,13 @@ from rlforge.schema.task import CodeTask
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     """Read newline-delimited JSON task records."""
     records: list[dict[str, Any]] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    # Split on "\n" ONLY. str.splitlines() also breaks on U+0085, U+2028, \x1c..
+    # which JSON strings may contain unescaped (json.dumps with ensure_ascii=False,
+    # pydantic's model_dump_json): a DeepCoder statement with U+0085 broke the
+    # run #3 pool load (2026-11-15). Iterating the file splits on "\n" only.
+    with path.open(encoding="utf-8", newline="\n") as handle:
+        lines = list(handle)
+    for line_number, line in enumerate(lines, start=1):
         text = line.strip()
         if not text:
             # Ignore blank lines to make hand-edited files friendlier.

@@ -180,7 +180,9 @@ def main() -> None:
 
     qm = QwenModel("Qwen/Qwen3.5-4B", revision=args.revision)
     tok = qm.tokenizer
-    grader = VerifierReward(tasks, SandboxConfig(backend="bwrap", timeout_s=60.0, cpu_s=60, mem_mb=8192))
+    # allow_legacy: evaluation only (5 HumanEval+ suites cannot be split; see verify/runner.py)
+    grader = VerifierReward(tasks, SandboxConfig(backend="bwrap", timeout_s=60.0, cpu_s=60, mem_mb=8192),
+                            allow_legacy=True)
 
     records: list[dict] = []
     torch.manual_seed(args.seed)

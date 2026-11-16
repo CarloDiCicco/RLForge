@@ -241,42 +241,29 @@ def verify_one(
     if not task.reference_solution:
         return VerificationOutcome(task.task_id, suite.kind, "no_solution")
 
+    # The same grader as the training reward (verify/runner.run_suite), with
+    # stop_on_fail=False so every test is run and the passing ones are counted.
     try:
-        probe, n_probed = build_probe(suite, max_tests)
-        if n_probed == 0:
-            return VerificationOutcome(task.task_id, suite.kind, "no_tests")
-        result = sandbox.run(task.reference_solution, probe, mode=suite.kind)
+        from rlforge.verify.runner import run_suite
+
+        cap = None if max_tests >= 10**8 else max_tests
+        sr = run_suite(sandbox, task.reference_solution, suite, max_tests=cap, stop_on_fail=False)
     except Exception as exc:  # noqa: BLE001 — deliberately broad, see docstring
         return VerificationOutcome(
             task.task_id, suite.kind, "harness_error", detail=f"{type(exc).__name__}: {exc}"
         )
-
-    passed = parse_verdict(result.stdout or "")
-    if passed is None:
-        # No verdict line: the probe died (timeout / OOM / hard exit). Recorded
-        # as verified-with-zero-passes plus a detail, so Stage 4 drops the task
-        # and the log can still distinguish this from genuine test failures.
-        return VerificationOutcome(
-            task.task_id,
-            suite.kind,
-            "verified",
-            n_tests_probed=n_probed,
-            n_tests_passed=0,
-            execution_time_s=getattr(result, "execution_time_s", 0.0) or 0.0,
-            exit_code=getattr(result, "exit_code", None),
-            detail="no verdict emitted (crash/timeout)",
-        )
-
-    valid = [i for i in passed if isinstance(i, int) and 0 <= i < n_probed]
+    if sr.n_tests == 0:
+        return VerificationOutcome(task.task_id, suite.kind, "no_tests", detail=sr.detail)
     return VerificationOutcome(
         task.task_id,
         suite.kind,
         "verified",
-        n_tests_probed=n_probed,
-        n_tests_passed=len(valid),
-        passed_indices=valid,
-        execution_time_s=getattr(result, "execution_time_s", 0.0) or 0.0,
-        exit_code=getattr(result, "exit_code", None),
+        n_tests_probed=sr.n_tests,
+        n_tests_passed=len(sr.passed_indices),
+        passed_indices=sr.passed_indices,
+        execution_time_s=sr.execution_time_s,
+        exit_code=sr.exit_code,
+        detail=("" if sr.passed else f"{sr.failure_type.value}: {(sr.stderr or sr.detail)[:200]}"),
     )
 
 

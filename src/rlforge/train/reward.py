@@ -10,7 +10,7 @@ Why this is a thin wrapper and not new code
 The reward replicates `pipeline.py`'s per-sample sequence (pipeline.py:248-265)
 step for step:
 
-    extract_code → grading_suite("hidden") → suite_to_test_code → sandbox.run
+    extract_code → grading_suite("hidden") → verify.runner.run_suite
 
 That identity is the point. The RL result is only meaningful as a delta against
 the three baselines in RESEARCH_LOG, and that delta only holds if "reward 1.0"
@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -58,7 +59,7 @@ THINK_END = "</think>"
 from rlforge.sandbox import make_sandbox
 from rlforge.sandbox.base import SandboxConfig
 from rlforge.schema.task import CodeTask
-from rlforge.verify.compiler import suite_to_test_code
+from rlforge.verify.runner import run_suite
 
 
 def _completion_text(completion: object) -> str:
@@ -71,6 +72,22 @@ def _completion_text(completion: object) -> str:
             if isinstance(m, dict) and isinstance(m.get("content"), str)
         )
     return ""
+
+
+# Hack monitor (audit 2026-11-15). The grader keeps expected outputs out of the
+# sandbox, so these patterns cannot earn reward any more; they are flagged so a
+# policy that STARTS probing the harness is visible in the logs, as a per-step
+# rate and per answer in executions.jsonl, and can be audited by hand.
+_SUSPICIOUS_RE = re.compile(
+    r"sys\._getframe|inspect\.(stack|currentframe|getouterframes)|\bf_back\b|\bf_globals\b"
+    r"|gc\.get_objects|import\s+__main__|__main__\.\w|/script\.py|/proc/"
+    r"|def\s+__eq__|__builtins__\s*\[|builtins\.\w+\s*=|os\.(fork|kill)|ctypes"
+)
+
+
+def suspicious_patterns(code: str) -> list[str]:
+    """Distinct suspicious substrings in extracted code (empty = clean)."""
+    return sorted({m.group(0) for m in _SUSPICIOUS_RE.finditer(code or "")})
 
 
 class VerifierReward:
@@ -99,6 +116,7 @@ class VerifierReward:
         execution_log_path: str | Path | None = None,
         verbose: bool = False,
         thinking: bool = False,
+        allow_legacy: bool = False,
     ) -> None:
         """
         Args:
@@ -142,6 +160,10 @@ class VerifierReward:
         self.correctness_weight = correctness_weight
         self.length_weight = length_weight
         self.max_workers = max_workers
+        # Evaluation only: grade the few un-splittable benchmark suites (5
+        # HumanEval+ tasks) with the old in-process harness. Training keeps it
+        # False so a reward can never come from the hackable path.
+        self.allow_legacy = allow_legacy
         self.thinking = thinking
         # Print a per-task breakdown after each graded batch. On for real runs: TRL's
         # progress bar only advances when a whole optimizer step completes, which here
@@ -287,6 +309,8 @@ class VerifierReward:
         self.last_batch_stats = {
             "reward/pass_rate": sum(1 for c in correctness if c > 0.0) / n,
             "reward/extraction_failure_rate": unparseable / n,
+            # share of answers whose code matches a harness-probing pattern
+            "reward/suspicious_rate": sum(1 for g in graded if g.get("suspicious")) / n,
             "reward/mean_completion_chars": sum(len(c) for c in completions) / n,
             "reward/mean_passing_code_chars": (
                 sum(passing_lengths) / len(passing_lengths) if passing_lengths else 0.0
@@ -368,27 +392,21 @@ class VerifierReward:
                 rec["failure_type"] = "no_grading_suite"
                 return rec
 
-            test_code = suite_to_test_code(suite, task.entry_point)
-            # An empty test body would make the assembled script exit 0 and print
-            # the sentinel with nothing checked — a FALSE PASS. `is_empty()` above
-            # catches the normal case; this guards the compiled result directly.
-            if not test_code.strip():
-                rec["failure_type"] = "no_grading_suite"
-                return rec
-
-            # mode MUST be the suite's own kind: a stdin_stdout candidate pasted
-            # in assert mode executes at import on empty stdin and dies with
-            # EOFError before any test runs (RESEARCH_LOG 2026-07-16).
-            result = self._sandbox.run(res.code, test_code, mode=suite.kind)
+            # verify/runner.run_suite: the one grader shared with the gold check
+            # and the benchmark. Expected outputs never enter the sandbox (audit
+            # 2026-11-15: the old in-process harness was hackable and failed
+            # open(0)-style input).
+            result = run_suite(self._sandbox, res.code, suite, allow_legacy=self.allow_legacy)
             rec["correctness"] = 1.0 if result.passed else 0.0
             rec["code_chars"] = len(res.code)
+            rec["suspicious"] = suspicious_patterns(res.code)
             rec["exec_time_s"] = round(result.execution_time_s, 4)
             rec["failure_type"] = getattr(
                 result.failure_type, "value", str(result.failure_type)
             )
             # Truncated to keep the log small; the head carries the exception type,
             # which is what distinguishes the failure modes.
-            rec["stderr"] = (result.stderr or "")[:400]
+            rec["stderr"] = (result.stderr or result.detail or "")[:400]
             return rec
         except Exception as exc:
             # Defensive: keep a long run alive. An ungradable completion is a zero,

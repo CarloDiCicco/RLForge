@@ -212,7 +212,9 @@ def main() -> None:
               gpu_memory_utilization=args.gpu_memory_utilization,
               # prompt (<1k tokens) + the full answer must fit in one sequence
               max_model_len=args.max_new_tokens + 2048)
-    grader = VerifierReward(tasks, SandboxConfig(backend="bwrap", timeout_s=60.0, cpu_s=60, mem_mb=8192))
+    # allow_legacy: evaluation only (5 HumanEval+ suites cannot be split; see verify/runner.py)
+    grader = VerifierReward(tasks, SandboxConfig(backend="bwrap", timeout_s=60.0, cpu_s=60, mem_mb=8192),
+                            allow_legacy=True)
     tok = llm.get_tokenizer()
 
     messages = [[{"role": "user", "content": build_prompt_for_task(tasks[tid])[0]}] for tid in ids]
