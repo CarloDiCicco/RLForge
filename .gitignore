@@ -188,6 +188,7 @@ __marimo__/
 .streamlit/secrets.toml
 
 PLAN.md
+PAPER_PLAN.md
 RESEARCH_LOG.md
 AGENTS.md
 .claude/
