@@ -225,6 +225,15 @@ class GRPOBlock(BaseModel):
     # 1600 rollouts — the same total compute as the original 1-task x 200-step
     # plan, because runtime tracks total generations rather than step count.
     max_steps: int = Field(default=25, ge=1)
+    # Task order. True = TRL's default: it reshuffles the train split with `seed`,
+    # so changing the seed ALSO changes which tasks land in which step. False =
+    # tasks are fed exactly in split-file order, 8 consecutive tasks per step
+    # (TRL's RepeatSampler without shuffle takes consecutive blocks of
+    # generation_batch_size / num_generations tasks). Run #3 onwards use False:
+    # the order is fixed once, seeded, by the split builder and committed with
+    # the split, so every run sees the same tasks at the same step and only the
+    # change under test differs.
+    shuffle_dataset: bool = Field(default=True)
     # ON. Turned off once, on the strength of a 22.9 GB peak — but that peak was
     # measured when an update held only 8 rollouts. At 64 rollouts (8 tasks x 8)
     # the backward pass over 32 layers of stored activations OOMed at ~105 GB, with
@@ -236,6 +245,12 @@ class GRPOBlock(BaseModel):
     # ── logging / checkpoints ─────────────────────────────────────────────────
     logging_steps: int = Field(default=1, ge=1)
     save_steps: int = Field(default=50, ge=1)
+    # LoRA-only snapshots (train/snapshots.py) every N steps, for scoring the
+    # learning curve on validation after the run and for weight analysis. Much
+    # smaller than a checkpoint (no optimizer state), so they can be frequent.
+    # The interval used is min(N, save_steps), so a snapshot is never sparser
+    # than the checkpoints. None = no snapshots (the older configs).
+    snapshot_every_steps: int | None = Field(default=None, ge=1)
     # tensorboard, not wandb: runs happen on the DGX over SSH, and tensorboard
     # writes plain event files into the artifact dir — no account, no network
     # egress, and it survives a dropped connection.
@@ -308,6 +323,13 @@ class GRPOExperimentConfig(BaseModel):
     eval_split: str | None = Field(default=None)
     # Cap for smoke runs. None = use the whole train split.
     max_train_tasks: int | None = Field(default=None, ge=1)
+    # Prompt templates (= task shapes) this run is meant to train on, e.g.
+    # [stdio_instruct_v1, generic_instruct_v1]. The run stops at startup if a
+    # training prompt uses a template not listed here (prompt_template/
+    # check_prompt_templates). The list is saved with the config in the run
+    # folder, and the count per template in <run>/prompt_templates.json.
+    # None = no check (the older configs).
+    prompt_templates: list[str] | None = Field(default=None)
     # Optional validation probe. None = no probe (the older configs).
     validation: ValidationBlock | None = Field(default=None)
     # Cap on validation tasks, for wiring checks only.

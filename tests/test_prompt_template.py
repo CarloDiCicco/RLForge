@@ -72,3 +72,18 @@ def test_built_prompt_and_extractor_agree_on_response_format():
     result = extract_code(fake_response)
     assert result.status == "fenced_python"
     assert result.ok
+
+
+# ── declared template list (config `prompt_templates`, eval --prompt-templates) ──
+
+def test_check_prompt_templates():
+    import pytest
+    from rlforge.prompt_template import check_prompt_templates
+    both = ["stdio_instruct_v1", "generic_instruct_v1"]
+    check_prompt_templates({"stdio_instruct_v1": 5, "generic_instruct_v1": 2}, both)
+    # declared but unused is fine (a smoke run may only reach one shape)
+    check_prompt_templates({"stdio_instruct_v1": 5}, both)
+    with pytest.raises(ValueError, match="not declared"):
+        check_prompt_templates({"stdio_instruct_v1": 5, "generic_instruct_v1": 2}, ["stdio_instruct_v1"])
+    with pytest.raises(ValueError, match="unknown"):
+        check_prompt_templates({"stdio_instruct_v1": 5}, ["stdio_v1"])

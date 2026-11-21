@@ -36,7 +36,37 @@ __all__ = [
     "build_stdio_prompt",
     "build_prompt_for_task",
     "is_stdio_task",
+    "KNOWN_TEMPLATES",
+    "check_prompt_templates",
 ]
+
+# Every template id a run can name in its config, with the task shape it serves.
+# A run lists the ids it expects (YAML `prompt_templates` for training,
+# --prompt-templates for evaluation); check_prompt_templates enforces the list.
+KNOWN_TEMPLATES = {
+    STDIO_PROMPT_TEMPLATE_ID: "stdin/stdout program",
+    PROMPT_TEMPLATE_ID: "complete a function (starter stub)",
+}
+
+
+def check_prompt_templates(counts: dict[str, int], allowed: list[str]) -> None:
+    """Fail if a run's prompts used a template the run did not declare.
+
+    `counts` = {template id: number of prompts built with it}, `allowed` = the ids
+    the config declares. Two mistakes are caught before any GPU work: a typo in
+    the config (an id that does not exist), and a task set that contains a shape
+    the run was not meant to include (e.g. function-call tasks slipping into a
+    stdin/stdout-only run). A declared template with no prompts is allowed (a
+    smoke run on the first few tasks may not reach both shapes)."""
+    unknown = sorted(set(allowed) - set(KNOWN_TEMPLATES))
+    if unknown:
+        raise ValueError(f"unknown prompt template id(s) {unknown}; known: {sorted(KNOWN_TEMPLATES)}")
+    undeclared = {t: n for t, n in counts.items() if t not in allowed}
+    if undeclared:
+        raise ValueError(
+            f"prompts built with template(s) not declared in the config: {undeclared} "
+            f"(declared: {sorted(allowed)})"
+        )
 
 
 def is_stdio_task(task: CodeTask) -> bool:

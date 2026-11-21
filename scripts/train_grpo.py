@@ -45,10 +45,11 @@ from trl import GRPOConfig, GRPOTrainer  # noqa: E402
 from transformers import AutoTokenizer  # noqa: E402
 
 from rlforge.adapters.task_loader import load_tasks  # noqa: E402
-from rlforge.prompt_template import build_prompt_for_task  # noqa: E402
+from rlforge.prompt_template import build_prompt_for_task, check_prompt_templates  # noqa: E402
 from rlforge.train.grpo_config import GRPOExperimentConfig, load_grpo_config  # noqa: E402
 from rlforge.train.reward import VerifierReward  # noqa: E402
 from rlforge.train.run_dir import create_run_dir, finish_run, write_run_provenance  # noqa: E402
+from rlforge.train.snapshots import LoraSnapshotCallback, snapshot_interval  # noqa: E402
 from rlforge.train.val_probe import ValidationProbe  # noqa: E402
 
 
@@ -153,7 +154,7 @@ class RewardStatsCallback(TrainerCallback):
         torch.cuda.reset_peak_memory_stats()
 
 
-def build_dataset(cfg: GRPOExperimentConfig) -> tuple[Dataset, dict]:
+def build_dataset(cfg: GRPOExperimentConfig) -> tuple[Dataset, dict, dict[str, int]]:
     """Build the prompt dataset and the task lookup the reward needs.
 
     The dataset carries `task_id` alongside `prompt` because TRL forwards extra
@@ -173,14 +174,15 @@ def build_dataset(cfg: GRPOExperimentConfig) -> tuple[Dataset, dict]:
         )
 
     if cfg.max_train_tasks is not None:
-        # Deterministic truncation (the split file is sorted) so a smoke run is
-        # reproducible and is a subset of the real run's prompts.
+        # Deterministic truncation (the split file is sorted, or ordered for a
+        # fixed-order run) so a smoke run is reproducible and is a subset of the
+        # real run's prompts (with shuffle_dataset false: its first steps).
         train_ids = train_ids[: cfg.max_train_tasks]
 
-    rows, template_ids = [], set()
+    rows, template_counts = [], {}
     for task_id in train_ids:
         prompt, template_id = build_prompt_for_task(tasks[task_id])
-        template_ids.add(template_id)
+        template_counts[template_id] = template_counts.get(template_id, 0) + 1
         # Chat format (a message list), NOT a plain string. For plain strings TRL
         # skips the chat template and the model sees raw text, which is what run12
         # did by mistake. As messages, TRL applies the template with
@@ -189,15 +191,18 @@ def build_dataset(cfg: GRPOExperimentConfig) -> tuple[Dataset, dict]:
         rows.append({"prompt": [{"role": "user", "content": prompt}], "task_id": task_id})
 
     # The prompt is part of the experiment: a run that silently used a different
-    # template than the baseline would not be comparable to it.
-    print(f"[train_grpo] prompt templates in use: {sorted(template_ids)}")
+    # template than the baseline would not be comparable to it. Since run #3 the
+    # pool mixes two task shapes (stdin/stdout and function-call), so two
+    # templates are expected; build_prompt_for_task picks one per task shape, the
+    # same choice the sweep and the eval make. The count per template is logged.
+    print(f"[train_grpo] prompt templates in use: {dict(sorted(template_counts.items()))}")
     print(f"[train_grpo] chat template applied, enable_thinking={cfg.enable_thinking}")
-    if len(template_ids) != 1:
-        raise ValueError(
-            f"expected exactly one prompt template for this benchmark, got {template_ids}"
-        )
+    if not template_counts:
+        raise ValueError("no training prompts built")
+    if cfg.prompt_templates is not None:
+        check_prompt_templates(template_counts, cfg.prompt_templates)
 
-    return Dataset.from_list(rows), tasks
+    return Dataset.from_list(rows), tasks, template_counts
 
 
 def setup_tensorboard_dir(run_dir: Path, experiment_id: str) -> Path:
@@ -325,7 +330,10 @@ def _train(cfg, run_dir: Path, resume_from: str | None = None) -> None:
               f"{total_gb:.0f} GB = {total_gb * cfg.grpo.max_memory_fraction:.0f} GB "
               f"(overrun kills this job, not the host)")
 
-    dataset, tasks = build_dataset(cfg)
+    dataset, tasks, template_counts = build_dataset(cfg)
+    # Which prompt formats this run actually trained on, beside the config.
+    (run_dir / "prompt_templates.json").write_text(json.dumps(
+        {"declared": cfg.prompt_templates, "counts": template_counts}, indent=1) + "\n")
     print(f"[train_grpo] {len(dataset)} training prompts; "
           f"{cfg.grpo.num_generations} rollouts each")
 
@@ -429,6 +437,9 @@ def _train(cfg, run_dir: Path, resume_from: str | None = None) -> None:
         # micro-batch — see grpo_config.py for the measured reason both exist.
         generation_batch_size=cfg.grpo.generation_batch_size,
         max_steps=cfg.grpo.max_steps,
+        # False for fixed-order runs: tasks are fed in split-file order (see
+        # grpo_config.py, shuffle_dataset).
+        shuffle_dataset=cfg.grpo.shuffle_dataset,
         gradient_checkpointing=cfg.grpo.gradient_checkpointing,
         bf16=True,
         seed=cfg.seed,
@@ -462,6 +473,15 @@ def _train(cfg, run_dir: Path, resume_from: str | None = None) -> None:
 
     probe = build_validation_probe(cfg, tasks, tokenizer, run_dir)
 
+    # LoRA-only snapshots every min(snapshot_every_steps, save_steps) steps
+    # (train/snapshots.py), scored on validation after the run.
+    snapshots = None
+    if cfg.grpo.snapshot_every_steps is not None:
+        interval = snapshot_interval(cfg.grpo.snapshot_every_steps, cfg.grpo.save_steps)
+        snapshots = LoraSnapshotCallback(run_dir, interval)
+        print(f"[train_grpo] LoRA snapshots every {interval} step(s) -> {run_dir / 'snapshots'}")
+    print(f"[train_grpo] task order: {'shuffled by TRL (seed)' if cfg.grpo.shuffle_dataset else 'split-file order (fixed)'}")
+
     # Sliced log-prob computation for long answers (train/chunked_logps.py).
     trainer_cls, trainer_kwargs = GRPOTrainer, {}
     if cfg.grpo.logits_chunk_size > 0:
@@ -484,7 +504,9 @@ def _train(cfg, run_dir: Path, resume_from: str | None = None) -> None:
             target_modules=cfg.lora.target_modules,
             task_type="CAUSAL_LM",
         ),
-        callbacks=[stats_callback] + ([probe] if probe is not None else []),
+        callbacks=[stats_callback]
+        + ([probe] if probe is not None else [])
+        + ([snapshots] if snapshots is not None else []),
     )
     if probe is not None:
         probe.trainer = trainer  # for its TensorBoard writer

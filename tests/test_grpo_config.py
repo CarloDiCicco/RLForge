@@ -274,7 +274,7 @@ def test_training_prompts_are_chat_formatted():
     spec.loader.exec_module(module)
 
     cfg = load_grpo_config(_CONFIGS / "grpo-lcb-leetcode-smoke.yaml")
-    dataset, _ = module.build_dataset(cfg)
+    dataset, _, _ = module.build_dataset(cfg)
     prompt = dataset[0]["prompt"]
     assert isinstance(prompt, list), "plain string => TRL skips the chat template"
     assert prompt == [{"role": "user", "content": prompt[0]["content"]}]

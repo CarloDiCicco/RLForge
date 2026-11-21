@@ -43,7 +43,33 @@ _MULTI_ANSWER_RE = re.compile(
     r"|if\s+(there\s+are|multiple)\s+[^.]{0,40}(answers|solutions|ways)[^.]{0,40}(any|either)",
     re.IGNORECASE,
 )
-_IMAGE_RE = re.compile(r"<image>|!\[|\.png\b|\.jpe?g\b|\.gif\b|<img", re.IGNORECASE)
+# "[Image]" is how the TACO/Codeforces scrape marks a removed picture; it was missing
+# here until 2026-11-21 (25 of 543 mixed sweep tasks had it).
+_IMAGE_RE = re.compile(r"<image>|\[image\]|!\[|\.png\b|\.jpe?g\b|\.gif\b|<img", re.IGNORECASE)
+
+# Grading risks found 2026-11-21 that the build step did not check. Training drops
+# them; the test set keeps them and reports a "clean" subset beside the full score.
+#  - "figure_ref": the statement points at a figure/picture the model never sees.
+#    Deliberately a bit broad (it also hits some harmless text): wrongly dropping a
+#    few training tasks costs little, keeping a task that needs a picture biases.
+#    It does NOT hit "figure out" or "take a picture".
+#  - "float_tolerance": the answer is accepted within an error bound, but the
+#    stdin/stdout grader compares text exactly, so a correct answer printed with
+#    other digits scores 0.
+_FIGURE_RE = re.compile(
+    r"\b(the|following|above|this|next)\s+(figure|picture|image|illustration|diagram)s?\b(?!\s+out)"
+    r"|\b(figure|fig\.)\s*\d"
+    r"|\b(figure|picture|image|illustration|diagram)\s+(below|above)\b"
+    r"|\bshown\s+(below|above)\b|\bas\s+shown\b"
+    r"|\b(picture|figure|image)\s+(shows|illustrates|represents|visualizes)\b",
+    re.IGNORECASE,
+)
+_FLOAT_TOL_RE = re.compile(
+    r"(absolute|relative)\s+(or\s+(absolute|relative)\s+)?error"
+    # no bare "tolerance": it hit a resistor-colour-code task (DC/e4cc09b009b8)
+    r"|\berror\s+(of|does\s+not\s+exceed|at\s+most|less\s+than|within)[^.]{0,30}10\s*\^",
+    re.IGNORECASE,
+)
 
 MIN_TESTS_TRAIN = 5  # training only; see audit_task's `min_tests`
 
@@ -78,6 +104,19 @@ def audit_task(task: CodeTask, *, min_tests: int) -> list[str]:
     kinds = {s.kind for s in task.test_suites.values()}
     if "assert" in kinds and not task.entry_point:
         reasons.append("no_entry_point")
+    return reasons
+
+
+def grading_risk_reasons(task: CodeTask) -> list[str]:
+    """Reasons the 0/1 reward may be wrong although the task is well formed
+    (see _FIGURE_RE / _FLOAT_TOL_RE). Separate from audit_task so the committed
+    test set is not silently shrunk when the build step is re-run."""
+    prompt = task.prompt or ""
+    reasons = []
+    if _FIGURE_RE.search(prompt):
+        reasons.append("figure_ref")
+    if _FLOAT_TOL_RE.search(prompt):
+        reasons.append("float_tolerance")
     return reasons
 
 

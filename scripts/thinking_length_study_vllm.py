@@ -27,6 +27,7 @@ Runs in the project environment (.venv: torch 2.13 + vLLM 0.31):
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import subprocess
 import sys
@@ -37,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rlforge.adapters.task_loader import load_tasks  # noqa: E402
-from rlforge.prompt_template import build_prompt_for_task  # noqa: E402
+from rlforge.prompt_template import build_prompt_for_task, check_prompt_templates  # noqa: E402
 from rlforge.sandbox.base import SandboxConfig  # noqa: E402
 from rlforge.train.reward import VerifierReward  # noqa: E402
 
@@ -157,6 +158,10 @@ def main() -> None:
                     help="allow the test split (baseline score only, never for choosing settings)")
     ap.add_argument("--limit", type=int, default=0, help="only the first N tasks (quick tests)")
     ap.add_argument("--tag", default="", help="suffix for the output folder name")
+    ap.add_argument("--prompt-templates", default="",
+                    help="comma-separated prompt template ids this eval may use, e.g. "
+                         "stdio_instruct_v1,generic_instruct_v1; stops if a task needs another. "
+                         "Empty = no check. Counts are saved in meta.json either way.")
     ap.add_argument("--gpu-memory-utilization", type=float, default=0.5,
                     help="share of the 121 GB unified memory vLLM may reserve")
     ap.add_argument("--adapter", default="",
@@ -178,6 +183,15 @@ def main() -> None:
     tasks = {t.task_id: t for t in load_tasks(args.tasks_file) if t.task_id in set(split_ids)}
     ids = sorted(tasks)[: args.limit or None]
 
+    # Prompts are built here, before any GPU work, so a format the eval was not
+    # meant to include stops it at once (see --prompt-templates).
+    built = {tid: build_prompt_for_task(tasks[tid]) for tid in ids}
+    template_counts = dict(Counter(tpl for _, tpl in built.values()))
+    declared = [t for t in args.prompt_templates.split(",") if t] or None
+    if declared is not None:
+        check_prompt_templates(template_counts, declared)
+    print(f"[length-study-vllm] prompt templates: {template_counts}", flush=True)
+
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out = Path("runs/eval") / f"{stamp}-thinking-length-study-vllm{('-' + args.tag) if args.tag else ''}"
     out.mkdir(parents=True, exist_ok=False)
@@ -190,7 +204,8 @@ def main() -> None:
                 "presence_penalty": args.presence_penalty, "repetition_penalty": 1.0}
     meta = {"args": vars(args), "sampling": sampling, "enable_thinking": True, "engine": "vllm",
             "vllm": vllm.__version__, "torch": torch.__version__, "n_tasks": len(ids),
-            "git_commit": git, "git_dirty": dirty, "started_at": stamp}
+            "git_commit": git, "git_dirty": dirty, "started_at": stamp,
+            "prompt_templates": {"declared": declared, "counts": template_counts}}
     (out / "meta.json").write_text(json.dumps(meta, indent=2))
     print(f"[length-study-vllm] {len(ids)} tasks x {args.rounds} rounds, cap {args.max_new_tokens}, -> {out}",
           flush=True)
@@ -217,7 +232,7 @@ def main() -> None:
                             allow_legacy=True)
     tok = llm.get_tokenizer()
 
-    messages = [[{"role": "user", "content": build_prompt_for_task(tasks[tid])[0]}] for tid in ids]
+    messages = [[{"role": "user", "content": built[tid][0]}] for tid in ids]
     records = []
     gen_s = 0.0
     # One vLLM call per round, saved right after it: a crash loses at most the
@@ -232,6 +247,8 @@ def main() -> None:
         outputs = llm.chat(messages, params, chat_template_kwargs={"enable_thinking": True}, use_tqdm=True)
         gen_s += time.time() - t0
         rows = grade_round(rnd, ids, outputs, tasks, tok, grader)
+        for r in rows:  # which prompt format produced this answer
+            r["prompt_template_id"] = built[r["task_id"]][1]
         with open(out / "answers.jsonl", "a") as f:
             for r in rows:
                 f.write(json.dumps(r) + "\n")
