@@ -1,0 +1,109 @@
+# SMOKE copy of grpo-vanilla-run3.yaml, generated from it by sed: ONLY experiment_id and
+# max_steps differ (check: diff the two files). Steps 1-2 are exactly the real run's first
+# two steps: same 16 tasks, same seed, LR constant after warmup so max_steps does not change it.
+# RUN #3 = BASELINE of the paper study: vanilla GRPO (beta 0) on Qwen3.5-4B,
+# thinking mode, DeepCoder pool (TACO-Verified + SYNTHETIC-1), 32k cap.
+# Every later run copies this file and changes ONE thing (PAPER_PLAN.md, Runs).
+#
+# Decisions (PAPER_PLAN.md, RESEARCH_LOG 2026-11-19/21):
+#   - algorithm: vanilla GRPO as in DeepSeekMath, minus KL (beta 0):
+#     loss averaged per answer then across answers (loss_type grpo), advantage
+#     divided by the group's std (scale_rewards group). TRL's defaults are
+#     different (dapo), so both are set explicitly.
+#   - cut-off = failure (reward 0, NOT masked). Masking is a later run.
+#   - data: mixed tasks from the sweep only, 50/50: code side (at least one
+#     wrong-code failure: code-only + both) and cut-off side (every failure hit
+#     the cap). EVERY batch of 8 = 4 + 4, from the first step to the last, so a
+#     run stopped early is not a differently-mixed run. Order fixed once by the
+#     split builder (seeded), committed in data/splits/run3_train.json.
+#   - task order: shuffle_dataset false, so TRL feeds the split file in order,
+#     8 consecutive tasks per step. The same order in every run.
+#   - learning rate 2e-5, 3 warmup steps, then constant (same in every run):
+#     stopping at step N gives the same model as a planned N-step run.
+#   - no validation during training (~2 h per probe). LoRA snapshots every
+#     2 steps, scored on data/splits/run3_val.json after the run.
+#   - vLLM memory 0.55 (run #2: 0.45 peaked at 91 GB reserved of the 111 GB
+#     cap; +0.10 is ~13 GB more, ~104 GB expected). The smoke run checks it;
+#     fall back to 0.45 if the peak passes ~108 GB.
+#
+# Length: max_steps = (code-side train tasks) / 4, rounded down. Final split
+# (2026-11-21, data/splits/run3_splits_report.json): 184 + 184 tasks = 46 steps
+# (~2.5 h per step at 32k, ~4.8 days). The builder checks this value.
+#
+# Usage (vLLM environment, repo root, inside tmux):
+#   smoke: .venv/bin/python scripts/train_grpo.py configs/grpo-vanilla-run3.yaml  (with max_steps 2)
+#   run:   .venv/bin/python scripts/train_grpo.py configs/grpo-vanilla-run3.yaml
+
+experiment_id: grpo-vanilla-run3-smoke
+seed: 0
+model_id: Qwen/Qwen3.5-4B
+model_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+enable_thinking: true
+
+tasks_file: data/run3_pool.jsonl
+train_split: data/splits/run3_train.json     # ORDERED: 4 code side + 4 cut-off per 8
+eval_split: data/splits/run3_test.json       # provenance only, never read
+# Task shapes trained on: the test has both (AtCoder stdin/stdout, LeetCode
+# functions). Startup stops if a training prompt uses any other template;
+# counts per template go to <run>/prompt_templates.json.
+prompt_templates: [stdio_instruct_v1, generic_instruct_v1]
+
+out_dir: runs/train
+
+lora:
+  r: 32
+  lora_alpha: 64
+  lora_dropout: 0.0
+  target_modules: [q_proj, k_proj, v_proj, o_proj, in_proj_qkv, in_proj_z, in_proj_a,
+                   in_proj_b, out_proj, gate_proj, up_proj, down_proj]
+
+grpo:
+  # sampling: the model learns from answers it wrote itself (as run #2)
+  temperature: 1.0
+  top_p: 0.95
+  top_k: 20
+  min_p: 0.0
+  presence_penalty: 0.0
+  max_completion_length: 32768
+  num_generations: 8
+  # objective: vanilla GRPO, no KL
+  beta: 0.0
+  loss_type: grpo
+  scale_rewards: group
+  mask_truncated_completions: false
+  # optimization
+  learning_rate: 2.0e-5
+  lr_scheduler_type: constant_with_warmup
+  warmup_steps: 3
+  tasks_per_update: 8
+  per_device_train_batch_size: 1
+  generation_batch_size: 64     # 8 tasks x 8 answers = one step
+  gradient_checkpointing: true
+  max_memory_fraction: 0.85
+  # generation engine
+  use_vllm: true
+  vllm_gpu_memory_utilization: 0.55
+  vllm_enable_sleep_mode: true
+  vllm_importance_sampling_correction: true
+  vllm_importance_sampling_mode: token_truncate
+  use_liger_kernel: true
+  logits_chunk_size: 2048
+  # length and order
+  max_steps: 2                  # SMOKE (real run: 46)
+  shuffle_dataset: false        # feed run3_train.json in its committed order
+  # logging / saving
+  logging_steps: 1
+  save_steps: 10                # full checkpoints, for resuming
+  snapshot_every_steps: 2       # LoRA-only, for the learning curve
+
+reward:
+  correctness_weight: 1.0
+  length_weight: 0.0
+  overlong_buffer: 0
+  max_workers: 8
+
+sandbox_config:
+  backend: bwrap
+  timeout_s: 60.0
+  cpu_s: 60
+  mem_mb: 8192
