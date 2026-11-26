@@ -487,8 +487,12 @@ def _train(cfg, run_dir: Path, resume_from: str | None = None) -> None:
     if cfg.grpo.logits_chunk_size > 0:
         from rlforge.train.chunked_logps import ChunkedLogpsGRPOTrainer
         trainer_cls = ChunkedLogpsGRPOTrainer
-        trainer_kwargs = {"logits_chunk_size": cfg.grpo.logits_chunk_size}
+        trainer_kwargs = {"logits_chunk_size": cfg.grpo.logits_chunk_size,
+                          "trim_trailing_padding": cfg.grpo.trim_trailing_padding}
         print(f"[train_grpo] log-probs computed {cfg.grpo.logits_chunk_size} positions at a time")
+        if cfg.grpo.trim_trailing_padding:
+            print("[train_grpo] trailing padding trimmed before each forward pass "
+                  "(logged as padding/trimmed_frac)")
 
     trainer = trainer_cls(
         **trainer_kwargs,

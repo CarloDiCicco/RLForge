@@ -314,8 +314,19 @@ def test_overlong_buffer_must_fit_under_the_cap():
     assert cfg.reward.overlong_buffer == 1024
 
 
+def test_trim_padding_requires_the_chunked_trainer():
+    # The trim lives in ChunkedLogpsGRPOTrainer (used only with logits_chunk_size
+    # > 0); without it the flag would silently do nothing.
+    with pytest.raises(ValueError, match="trim_trailing_padding requires"):
+        GRPOExperimentConfig.model_validate(_minimal(grpo={"trim_trailing_padding": True}))
+    cfg = GRPOExperimentConfig.model_validate(
+        _minimal(grpo={"trim_trailing_padding": True, "logits_chunk_size": 2048}))
+    assert cfg.grpo.trim_trailing_padding
+
+
 def test_new_options_default_to_the_previous_behaviour():
     # Old configs must load and train exactly as before.
     g = GRPOExperimentConfig.model_validate(_minimal()).grpo
     assert (g.use_vllm, g.presence_penalty, g.min_p, g.use_liger_kernel) == (False, 0.0, 0.0, False)
+    assert g.trim_trailing_padding is False
     assert GRPOExperimentConfig.model_validate(_minimal()).reward.overlong_buffer == 0

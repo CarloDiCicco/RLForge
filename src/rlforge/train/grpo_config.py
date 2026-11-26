@@ -152,6 +152,14 @@ class GRPOBlock(BaseModel):
     # Needed for long answers: one 32k answer's full logits are ~30 GB.
     # 0 = TRL's original implementation.
     logits_chunk_size: int = Field(default=0, ge=0)
+    # Cut the trailing padding off each micro-batch before the model's forward
+    # pass; see train/chunked_logps.py. TRL pads every answer to the longest one
+    # in the step (32k as soon as one answer is cut off) and never trims, so a
+    # 15k answer costs a 34k forward. Same math: the model is causal (a position
+    # never sees later ones) and padded positions are masked out of the loss.
+    # Needs logits_chunk_size > 0 (that trainer class implements it).
+    # False = TRL's behaviour (every run before run #3).
+    trim_trailing_padding: bool = Field(default=False)
 
     # ── optimization ──────────────────────────────────────────────────────────
     # The default 1e-6 is TRL's, tuned for FULL fine-tuning. With LoRA it moved
@@ -399,6 +407,13 @@ class GRPOExperimentConfig(BaseModel):
                 "other, not both."
             )
 
+        # The trimming lives in ChunkedLogpsGRPOTrainer, which train_grpo.py uses
+        # only when logits_chunk_size > 0; without it the flag would do nothing.
+        if g.trim_trailing_padding and g.logits_chunk_size == 0:
+            raise ValueError(
+                "grpo.trim_trailing_padding requires grpo.logits_chunk_size > 0 "
+                "(implemented in train/chunked_logps.py)"
+            )
         if g.presence_penalty > 0.0 and not g.use_vllm:
             raise ValueError(
                 "grpo.presence_penalty > 0 requires grpo.use_vllm: HF generate() has no "
